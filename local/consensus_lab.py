@@ -853,8 +853,39 @@ def stage_regions_and_walls(lines, seal_mask, dist, cfg, prob_full):
     }
 
 
-def stage_consensus(lines, labels, room_ids, rooms, walls, cubicasa_rooms, cx0, cy0, cfg):
-    """Cell 7 (notebook cell index 10) -- Layer 3 consensus scoring + invariants + routing."""
+def stage_consensus(lines, labels, room_ids, rooms, walls, cubicasa_rooms, cx0, cy0, cfg,
+                    exterior_labels=frozenset()):
+    """Cell 7 (notebook cell index 10) -- Layer 3 consensus scoring + invariants + routing.
+
+    CubiCasa's rasterized rooms are filtered/mapped in two explicitly separate
+    passes (see local/README.md "Findings: why is consensus 0.07?" items 2/2b for
+    the bug this replaces):
+
+      1. area filter -- drop fragment-noise rooms (CubiCasa's polygon export
+         shatters some real rooms into disconnected slivers) using the same
+         min_room_area(cfg) threshold MitUNet regions are held to.
+      2. max-overlap mapping -- for each surviving room, map it to whichever
+         MitUNet region it overlaps most BY PIXEL AREA (every rasterized pixel,
+         not one sampled centroid point), and keep it only if that overlap is
+         nonzero. This replaces the old single-point _centroid_label rule, which
+         was dropping the two largest real rooms in the fixture file because
+         their sampled centroid happened to land on a MitUNet wall pixel drawn
+         through the middle of a room MitUNet had internally subdivided.
+
+    The old ">=50% inside crop" coverage filter is deleted, not fixed: its
+    coverage_ratio (rasterized mask px / shoelace polygon area) never dips below
+    1.0 anywhere in this fixture (crop_offset=(0,0), plan fills the sheet -- there
+    is no crop boundary to clip a neighbour room against), so it has never fired
+    and is confirmed dead code, not merely unexercised. There is also no crop
+    rectangle available to clip against here: cx0/cy0 is a translation offset
+    applied to CubiCasa coordinates, not a stored crop width/height, so "fix it to
+    clip against the actual crop rectangle" would mean inventing new state this
+    function doesn't otherwise need. The area filter above already removes any
+    resulting sliver small enough to be noise; a partial-room fragment that
+    survives a real crop AND clears min_room_area is legitimate area worth
+    scoring, not something a coverage filter should be discarding either.
+    coverage_info is kept purely as descriptive per-room diagnostic output.
+    """
     all_cubi_pairs = rasterize_rooms(cubicasa_rooms, labels.shape, cx0, cy0)
 
     coverage_info = {}
@@ -863,20 +894,78 @@ def stage_consensus(lines, labels, room_ids, rooms, walls, cubicasa_rooms, cx0, 
         coverage_info[r["id"]] = {"mask_sum": int(m.sum()), "polygon_area": area,
                                    "coverage_ratio": float(m.sum() / area)}
 
-    cubi_pairs = [(r, m) for r, m in all_cubi_pairs
-                  if m.sum() >= 0.5 * max(shoelace_area(r["polygon"]), 1)]
+    # -- Job 1: explicit area filter for fragment noise (before any mapping).
+    min_area = min_room_area(cfg)
+    area_pairs = [(r, m) for r, m in all_cubi_pairs if m.sum() >= min_area]
+    area_dropped = [(r, m) for r, m in all_cubi_pairs if m.sum() < min_area]
+    area_dropped_ids = {r["id"] for r, m in area_dropped}
+    area_dropped_total_px = sum(int(m.sum()) for r, m in area_dropped)
+    log(lines, f"cubicasa area filter: min_room_area={min_area:.0f}px^2 -- "
+                f"dropped {len(area_dropped)}/{len(all_cubi_pairs)} rooms as fragment noise, "
+                f"total {area_dropped_total_px}px^2")
 
-    def _centroid_label(m):
-        ys, xs = np.nonzero(m)
-        return labels[int(ys.mean()), int(xs.mean())] if len(xs) else 0
+    # -- Job 2: max-overlap mapping, using every rasterized pixel rather than one
+    # sampled centroid point. bincount over the labels restricted to the room's
+    # mask gives the overlap area against every MitUNet region in one pass.
+    n_labels = int(labels.max()) + 1
 
-    centroid_labels = {}
-    cubi_pairs2 = [(r, m, _centroid_label(m)) for r, m in cubi_pairs]
-    for r, m, l in cubi_pairs2:
-        centroid_labels[r["id"]] = int(l)
-    cubi_pairs_final = [(r, m, l) for r, m, l in cubi_pairs2 if l in room_ids]
+    def _max_overlap_label(m):
+        mb = m.astype(bool)
+        if not mb.any():
+            return 0, 0
+        counts = np.bincount(labels[mb], minlength=n_labels)
+        best_label, best_overlap = 0, 0
+        for rid in room_ids:
+            c = int(counts[rid]) if rid < len(counts) else 0
+            if c > best_overlap:
+                best_overlap, best_label = c, rid
+        return best_label, best_overlap
+
+    # A room with no overlap against any COUNTED region is dropped, but where its
+    # pixels actually landed is diagnostically different: sitting on wall/background
+    # is over-segmentation debris, whereas sitting inside MitUNet's EXTERIOR region
+    # is the two models disagreeing about the building envelope. room_010_6 (26,010px^2)
+    # is 99.6% inside exterior label 1 - a real disagreement worth surfacing, not noise.
+    def _dominant_noncounted(m):
+        mb = m.astype(bool)
+        if not mb.any():
+            return None, 0
+        counts = np.bincount(labels[mb], minlength=n_labels)
+        order = np.argsort(-counts)
+        for lab in order:
+            lab = int(lab)
+            if counts[lab] == 0:
+                break
+            if lab not in room_ids:
+                return lab, int(counts[lab])
+        return None, 0
+
+    overlap_labels = {}
+    overlap_px = {}
+    landed_in = {}
+    cubi_pairs2 = []
+    for r, m in area_pairs:
+        label, overlap = _max_overlap_label(m)
+        overlap_labels[r["id"]] = int(label)
+        overlap_px[r["id"]] = int(overlap)
+        cubi_pairs2.append((r, m, label))
+        if overlap > 0:
+            log(lines, f"cubicasa room {r['id']} ({r.get('type', '?')}, "
+                        f"{int(m.sum())}px^2): max-overlap MitUNet label {label} ({overlap}px overlap)")
+        else:
+            lab, cnt = _dominant_noncounted(m)
+            where = ("MitUNet exterior" if lab in exterior_labels
+                     else "wall/background" if lab == 0
+                     else f"non-counted label {lab}")
+            landed_in[r["id"]] = {"label": lab, "px": cnt, "where": where}
+            log(lines, f"cubicasa room {r['id']} ({r.get('type', '?')}, "
+                        f"{int(m.sum())}px^2): NO overlap with any counted room - "
+                        f"{cnt}px ({100.0 * cnt / max(int(m.sum()), 1):.0f}%) lies in {where}")
+
+    cubi_pairs_final = [(r, m, l) for r, m, l in cubi_pairs2 if overlap_px[r["id"]] > 0]
     cubi_masks = [m for _, m, _ in cubi_pairs_final]
     surviving_ids = [r["id"] for r, _, _ in cubi_pairs_final]
+    zero_overlap_ids = {r["id"] for r, m in area_pairs} - set(surviving_ids)
     room_masks = build_room_masks(labels, room_ids)
 
     if room_ids and cubi_masks:
@@ -905,7 +994,11 @@ def stage_consensus(lines, labels, room_ids, rooms, walls, cubicasa_rooms, cx0, 
 
     return {
         "all_cubi_pairs": all_cubi_pairs, "coverage_info": coverage_info,
-        "centroid_labels": centroid_labels, "surviving_ids": surviving_ids,
+        "min_room_area": min_area,
+        "area_dropped_ids": area_dropped_ids, "area_dropped_total_px": area_dropped_total_px,
+        "overlap_labels": overlap_labels, "overlap_px": overlap_px,
+        "zero_overlap_ids": zero_overlap_ids, "zero_overlap_landed_in": landed_in,
+        "surviving_ids": surviving_ids,
         "cubi_masks": cubi_masks, "cubi_pairs_final": cubi_pairs_final,
         "room_masks": room_masks, "iou": iou, "matches": matches, "consensus": consensus,
         "inv": inv, "n_loose": n_loose, "hard_fail": hard_fail,
@@ -1025,7 +1118,11 @@ def build_diagnostics(region_ctx, consensus_ctx, split_ctx_tuple, cfg, cubicasa_
 
     # -- cubicasa room survival diagnostics
     coverage_info = consensus_ctx["coverage_info"]
-    centroid_labels = consensus_ctx["centroid_labels"]
+    overlap_labels = consensus_ctx["overlap_labels"]
+    overlap_px = consensus_ctx["overlap_px"]
+    min_room_area_px = consensus_ctx["min_room_area"]
+    area_dropped_ids = consensus_ctx["area_dropped_ids"]
+    zero_overlap_ids = consensus_ctx["zero_overlap_ids"]
     surviving_ids = set(consensus_ctx["surviving_ids"])
     rasterized_ids = {r["id"] for r, _ in all_cubi_pairs}
 
@@ -1034,6 +1131,7 @@ def build_diagnostics(region_ctx, consensus_ctx, split_ctx_tuple, cfg, cubicasa_
         rid = r["id"]
         area = shoelace_area(r["polygon"])
         entry = {"id": rid, "type": r.get("type", "?"), "polygon_area_px": area}
+        cov = coverage_info.get(rid, {})
         if rid not in rasterized_ids:
             entry["survived"] = False
             entry["drop_reason"] = "out_of_crop"
@@ -1041,24 +1139,27 @@ def build_diagnostics(region_ctx, consensus_ctx, split_ctx_tuple, cfg, cubicasa_
         elif rid in surviving_ids:
             entry["survived"] = True
             entry["drop_reason"] = None
-            cov = coverage_info.get(rid, {})
             entry["detail"] = {"coverage_ratio": cov.get("coverage_ratio"),
-                                "centroid_label": centroid_labels.get(rid)}
+                                "overlap_label": overlap_labels.get(rid),
+                                "overlap_px": overlap_px.get(rid)}
+        elif rid in area_dropped_ids:
+            entry["survived"] = False
+            entry["drop_reason"] = "area_filter"
+            entry["detail"] = {"mask_sum_px": cov.get("mask_sum"), "polygon_area_px": cov.get("polygon_area"),
+                                "min_room_area_px": min_room_area_px}
+        elif rid in zero_overlap_ids:
+            entry["survived"] = False
+            entry["drop_reason"] = "zero_overlap"
+            entry["detail"] = {"mask_sum_px": cov.get("mask_sum"),
+                                "why": "max-overlap search found no MitUNet room_ids pixel under this room's mask "
+                                       "(entirely background/wall/exterior/below-min-area MitUNet territory)"}
         else:
-            cov = coverage_info.get(rid, {})
-            if cov and cov["coverage_ratio"] < 0.5:
-                entry["survived"] = False
-                entry["drop_reason"] = "coverage_filter"
-                entry["detail"] = {"mask_sum_px": cov["mask_sum"], "polygon_area_px": cov["polygon_area"],
-                                    "coverage_ratio": cov["coverage_ratio"], "threshold": 0.5}
-            else:
-                entry["survived"] = False
-                entry["drop_reason"] = "centroid_filter"
-                cl = centroid_labels.get(rid)
-                why = "background/wall pixel" if cl == 0 else (
-                    "exterior region" if cl in region_ctx["exterior"] else
-                    "a MitUNet region below MIN_ROOM_AREA / not counted as a room")
-                entry["detail"] = {"centroid_label": cl, "coverage_ratio": cov.get("coverage_ratio"), "why": why}
+            # Shouldn't happen -- every rasterized room is exactly one of
+            # surviving / area-dropped / zero-overlap. Keep a visible fallback
+            # instead of silently mis-labeling if that invariant ever breaks.
+            entry["survived"] = False
+            entry["drop_reason"] = "unknown"
+            entry["detail"] = {"coverage_ratio": cov.get("coverage_ratio")}
         cubicasa_rooms_diag.append(entry)
 
     # -- official (post-filter) consensus block
@@ -1247,7 +1348,8 @@ def main():
     seal_mask, cubicasa_rooms, fixtures, m3 = stage_cubicasa_seal(lines, mask, sg, rf, m2["t_med"], cx0, cy0, H, W, cfg=cfg)
     region_ctx = stage_regions_and_walls(lines, seal_mask, dist, cfg, prob_full)
     consensus_ctx = stage_consensus(lines, region_ctx["labels"], region_ctx["room_ids"], region_ctx["rooms"],
-                                     region_ctx["walls"], cubicasa_rooms, cx0, cy0, cfg)
+                                     region_ctx["walls"], cubicasa_rooms, cx0, cy0, cfg,
+                                     exterior_labels=region_ctx["exterior"])
     consensus_final, consensus_split, split_ctx = stage_watershed_split(
         lines, region_ctx["labels"], region_ctx["room_ids"], consensus_ctx, cfg)
     report = stage_acceptance(lines, region_ctx["rooms"], consensus_ctx["cubi_masks"], consensus_ctx["matches"],

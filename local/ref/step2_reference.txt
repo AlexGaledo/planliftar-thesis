@@ -11,10 +11,22 @@ room polygons (closed by construction): [5, 11, 5, 8, 4, 9, 14, 16, 4, 4, 4, 9, 
 derived 240 raw wall runs from 45 adjacent label pairs
 wall post-process: 240 raw -> dedupe -> 146 -> axis-snap -> merge collinear -> 75 -> drop stubs -> 73 final walls over 43 label pairs (dup_tol=6.5px snap_angle=10.0deg collinear_tol=13.0px gap_tol=19.5px stub_len=26.0px)
 final 73 wall runs from 45 adjacent label pairs
-consensus: 1 matches / max(13 mitunet, 9 cubicasa) = 0.08
+cubicasa area filter: min_room_area=2000px^2 -- dropped 20/31 rooms as fragment noise, total 4488px^2
+cubicasa room room_002_0 (kitchen, 85580px^2): max-overlap MitUNet label 12 (68811px overlap)
+cubicasa room room_002_3 (kitchen, 28863px^2): max-overlap MitUNet label 12 (4079px overlap)
+cubicasa room room_003_0 (living_room, 216881px^2): max-overlap MitUNet label 6 (62897px overlap)
+cubicasa room room_003_1 (living_room, 5860px^2): NO overlap with any counted room - 5860px (100%) lies in MitUNet exterior
+cubicasa room room_004_0 (bedroom, 135653px^2): max-overlap MitUNet label 7 (102549px overlap)
+cubicasa room room_005_0 (bathroom, 33400px^2): max-overlap MitUNet label 10 (29888px overlap)
+cubicasa room room_005_4 (bathroom, 12576px^2): max-overlap MitUNet label 18 (4731px overlap)
+cubicasa room room_010_0 (room, 49217px^2): max-overlap MitUNet label 3 (22389px overlap)
+cubicasa room room_010_1 (room, 210827px^2): max-overlap MitUNet label 12 (55335px overlap)
+cubicasa room room_010_6 (room, 26010px^2): NO overlap with any counted room - 25905px (100%) lies in MitUNet exterior
+cubicasa room room_010_9 (room, 4218px^2): NO overlap with any counted room - 4056px (96%) lies in wall/background
+consensus: 1 matches / max(13 mitunet, 8 cubicasa) = 0.08
 invariants: {'all_polygons_closed': True, 'min_area_ok': True, 'room_count_sane': True, 'has_rooms': True, 'loose_endpoints_warn': 6}
 routing: hard_fail=False  merged_rooms_note=True  needs_repair=False
-virtual split: 13 regions -> 16 sub-rooms; consensus 0.08 -> 0.06
+virtual split: 13 regions -> 13 sub-rooms; consensus 0.08 -> 0.08
 {
   "accepted": true,
   "reject_reasons": [],
@@ -23,7 +35,7 @@ virtual split: 13 regions -> 16 sub-rooms; consensus 0.08 -> 0.06
   ],
   "metrics": {
     "rooms_mitunet": 13,
-    "rooms_cubicasa": 9,
+    "rooms_cubicasa": 8,
     "consensus_iou": 0.077,
     "consensus_raw": 0.077,
     "matches": 1,
@@ -46,13 +58,13 @@ OK cubicasa_wall_px: reference=182822  computed=182822
 OK opening_bars: reference=16  computed=16
 OK labels: reference=19  computed=19
 OK exterior: reference=1  computed=1
-!! rooms: reference=14  computed=13
+OK rooms: reference=13  computed=13
 OK wall_runs: reference=73  computed=73
 OK adjacent_pairs: reference=45  computed=45
 OK matches: reference=1  computed=1
-!! rooms_mitunet: reference=14  computed=13
-OK rooms_cubicasa: reference=9  computed=9
-!! consensus: reference=0.07  computed=0.07692307692307693
+OK rooms_mitunet: reference=13  computed=13
+!! rooms_cubicasa: reference=9  computed=8
+OK consensus: reference=0.08  computed=0.07692307692307693
 RESULT: does NOT reproduce the reference log numerically. Either the wall/room geometry genuinely changed (intended - then re-snapshot local/ref/step2_reference.txt in the same commit), or the wall-prob/CubiCasa inputs are mispaired (see local/README.md).
 
 wrote <repo>\local\out\diagnostics.json
