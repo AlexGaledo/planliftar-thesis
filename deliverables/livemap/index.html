@@ -690,12 +690,17 @@
   //   schema 2.0  "start": {x, y}      + thickness      (thickness in px - our export)
   //
   // Everything downstream expects {x, y} objects and a px thickness, so convert
-  // once here. Metre-thickness plans (no thickness_px, values < 1) are left as
-  // they are and simply draw hairline-thin - guessing a pixels_per_meter to
-  // rescale them would invent geometry, and `scale.pixels_per_meter` is marked
-  // "assumed_default" with confidence 0.0 in the files that carry it.
+  // once here. Where a file states its own conversion (metadata.pixel_to_meter_ratio)
+  // metre thicknesses are converted with it. That is verified exact against this
+  // project's own pair: every wall in sample_response.json (metres) equals
+  // mitunet_geometry.json's thickness_px when divided by that ratio of 0.01.
+  // Without a stated ratio the value is left alone and simply draws thin -
+  // guessing a scale would invent geometry, and note the OTHER scale field,
+  // scale.pixels_per_meter, is marked "assumed_default" with confidence 0.0.
   function normalizePlan(data) {
     if (!data || typeof data !== "object" || !Array.isArray(data.walls)) return data;
+    // Present only on the forked schema, which states thickness in metres.
+    const ratio = Number(data && data.metadata && data.metadata.pixel_to_meter_ratio) || 0;
     const pt = (v) => (Array.isArray(v) && v.length >= 2
       ? { x: v[0], y: v[1] }
       : v);
@@ -704,6 +709,8 @@
       const out = { ...w, start: pt(w.start), end: pt(w.end) };
       if (typeof out.thickness !== "number" && typeof w.thickness_px === "number") {
         out.thickness = w.thickness_px;
+      } else if (typeof out.thickness === "number" && ratio > 0) {
+        out.thickness = out.thickness / ratio;
       }
       return out;
     });
