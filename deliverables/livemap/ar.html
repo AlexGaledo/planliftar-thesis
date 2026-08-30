@@ -740,10 +740,47 @@ function planUrl() {
   return `plans/${safe}.json`;
 }
 
+// Kept in step with index.html's normalizePlan(). Three schemas exist across
+// this project's own files and the wall builder below assumes exactly one of
+// them - {x, y} endpoints and a thickness in PLAN PIXELS, which it divides by
+// ppm to get metres:
+//
+//   schema 1.0  "start": [x, y]   + thickness_px            (mitunet_geometry.json)
+//   forked      "start": {x, y}   + thickness in METRES     (sample_response.json)
+//   schema 2.0  "start": {x, y}   + thickness in px         (our export)
+//
+// Without this, the forked schema's 0.10-0.32 m thicknesses are read as pixels,
+// divided by ppm again, and collapse to the 0.02 m floor - walls render about
+// 5x too thin. Metres are converted using the file's OWN stated ratio
+// (metadata.pixel_to_meter_ratio), which is exact: every wall in
+// sample_response.json equals mitunet_geometry.json's thickness_px when divided
+// by it. A file with no stated ratio is left alone rather than guessed at.
+function normalizePlan(data) {
+  if (!data || typeof data !== "object" || !Array.isArray(data.walls)) return data;
+  const ratio = Number(data && data.metadata && data.metadata.pixel_to_meter_ratio) || 0;
+  const pt = (v) => (Array.isArray(v) && v.length >= 2 ? { x: v[0], y: v[1] } : v);
+  data.walls = data.walls.map((w) => {
+    if (!w || typeof w !== "object") return w;
+    const out = { ...w, start: pt(w.start), end: pt(w.end) };
+    if (typeof out.thickness !== "number" && typeof w.thickness_px === "number") {
+      out.thickness = w.thickness_px;
+    } else if (typeof out.thickness === "number" && ratio > 0) {
+      out.thickness = out.thickness / ratio;
+    }
+    return out;
+  });
+  if (Array.isArray(data.rooms)) {
+    data.rooms = data.rooms.map((r) => (r && Array.isArray(r.polygon)
+      ? { ...r, polygon: r.polygon.map(pt) }
+      : r));
+  }
+  return data;
+}
+
 async function loadFloorplan() {
   const res = await fetch(planUrl(), { cache: "no-store" });
   if (!res.ok) throw new Error("HTTP " + res.status);
-  const data = await res.json();
+  const data = normalizePlan(await res.json());
   planData = data;
   planBoundsPx = computeFootprintBounds(data);
   planOffsetPx = { x: (planBoundsPx.minX + planBoundsPx.maxX) / 2,
