@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import re
 import sys
@@ -72,6 +73,41 @@ CFG = {
     "MIN_BOUNDARY_PTS_T_MED_FRAC": 5.0 / 26.0,   # min boundary-px count per label pair -> 5.0px at t_med=26
     "OPENING_BAR_MIN_T_MED_FRAC": 6.0 / 26.0,    # floor on opening-bar thickness -> 6.0px at t_med=26
     "WALL_MIN_THICKNESS_T_MED_FRAC": 2.0 / 26.0,  # floor on rasterized CubiCasa wall thickness -> 2.0px at t_med=26
+
+    # Task C -- post-processing pass over the raw derived wall segments (dedupe
+    # reversed near-duplicates from 1px-wide-curve contour tracing, axis-snap,
+    # merge collinear touching/overlapping runs, drop stubs). Expressed as
+    # fractions of t_med for the same resolution-relative reason as Task A; each
+    # comment gives the absolute px value it reproduces at this sample's
+    # t_med=26.0px. The snap angle is the one exception -- degrees are already
+    # scale-free, so it's a plain degree value.
+    #
+    # Values below were swept (see task report), not left at the brief's starting
+    # guesses -- the guesses (0.25/8deg/0.3/0.5/0.5) landed at 95 walls with 47%
+    # of segments still >5deg off-axis by count. Widening WALL_SNAP_ANGLE_DEG,
+    # WALL_COLLINEAR_T_MED_FRAC, WALL_MERGE_GAP_T_MED_FRAC and WALL_STUB_LEN_T_MED_FRAC
+    # trades a few more (still-correct) merges/drops for a meaningfully smaller,
+    # cleaner wall list. The off-axis-by-COUNT metric plateaus around 35-45% past
+    # this point no matter how far tolerances are pushed -- that floor is
+    # structural (approxPolyDP's zigzag staircase alternates direction between
+    # consecutive segments, so they are never pairwise collinear) and needs the
+    # derivation rewritten to fix, which is out of scope here. By LENGTH (the
+    # metric that actually matters for the AR extrusion), off-axis segments are
+    # only ~12-15% of total wall length at these settings.
+    #
+    # WALL_COLLINEAR_T_MED_FRAC=0.4 (10.4px) was tried and REJECTED: it lands on
+    # an unlucky knife-edge where one particular near-borderline segment pair
+    # flips its merge decision between resolutions from 1px rounding in the
+    # underlying pixel geometry, breaking local/test_resolution.py's 5% scale
+    # tolerance at 2x (7.8% observed) even though the tolerance itself is
+    # correctly t_med-relative. 0.3, 0.35, 0.5 and 0.6 all sit comfortably off
+    # that edge (<1% error at every scale) -- 0.5 was chosen as a value with
+    # headroom on both sides, not just the first one that happened to pass.
+    "WALL_DUP_TOL_T_MED_FRAC": 6.5 / 26.0,        # duplicate-endpoint match tolerance -> 6.5px at t_med=26
+    "WALL_SNAP_ANGLE_DEG": 10.0,                  # axis-snap angle tolerance, degrees
+    "WALL_COLLINEAR_T_MED_FRAC": 13.0 / 26.0,     # perpendicular distance for collinearity -> 13.0px at t_med=26
+    "WALL_MERGE_GAP_T_MED_FRAC": 19.5 / 26.0,     # endpoint-gap tolerance for merging collinear runs -> 19.5px at t_med=26
+    "WALL_STUB_LEN_T_MED_FRAC": 26.0 / 26.0,      # min surviving segment length -> 26.0px at t_med=26
 }
 
 
@@ -263,7 +299,7 @@ def parse_reference_log(path):
         except json.JSONDecodeError:
             pass
 
-    m = re.search(r"derived (\d+) wall runs from (\d+) adjacent label pairs", text)
+    m = re.search(r"final (\d+) wall runs from (\d+) adjacent label pairs", text)
     if m:
         ref["wall_runs"] = int(m.group(1))
         ref["adjacent_pairs"] = int(m.group(2))
@@ -323,7 +359,9 @@ def compare_to_reference(lines, computed, ref):
 
     if any_mismatch:
         log(lines, "RESULT: does NOT reproduce the reference log numerically. "
-                    "See local/README.md for why (sample-pairing mismatch, not a bug).")
+                    "Either the wall/room geometry genuinely changed (intended - then "
+                    "re-snapshot local/ref/step2_reference.txt in the same commit), or "
+                    "the wall-prob/CubiCasa inputs are mispaired (see local/README.md).")
     else:
         log(lines, "RESULT: reproduces the reference log numerically.")
     return {"reference_available": True, "deltas": deltas, "any_mismatch": any_mismatch}
@@ -410,6 +448,212 @@ def stage_cubicasa_seal(lines, mask, sg, rf, t_med, cx0, cy0, H, W, cfg=None):
     return seal_mask, cubicasa_rooms, fixtures, {"cubicasa_wall_px": cubi_px, "opening_bars": sealed}
 
 
+def _pt_dist(p, q):
+    return math.hypot(p[0] - q[0], p[1] - q[1])
+
+
+def _dedupe_reversed(group, tol):
+    """Drop reversed near-duplicate segments within one label pair's wall list.
+    Two segments are duplicates when their endpoints match within `tol` either
+    same-order or reversed -- see the task brief's reference test."""
+    kept = []
+    used = [False] * len(group)
+    for i, w in enumerate(group):
+        if used[i]:
+            continue
+        a = (w["start"]["x"], w["start"]["y"])
+        b = (w["end"]["x"], w["end"]["y"])
+        for j in range(i + 1, len(group)):
+            if used[j]:
+                continue
+            w2 = group[j]
+            c = (w2["start"]["x"], w2["start"]["y"])
+            e = (w2["end"]["x"], w2["end"]["y"])
+            if (_pt_dist(a, e) < tol and _pt_dist(b, c) < tol) or (_pt_dist(a, c) < tol and _pt_dist(b, e) < tol):
+                used[j] = True
+        used[i] = True
+        kept.append(w)
+    return kept
+
+
+def _axis_snap(w, angle_tol_deg):
+    """Snap a segment's endpoints (in place) to horizontal/vertical when the
+    segment is within angle_tol_deg of that axis. Snapping sets both endpoints'
+    shared coordinate to their rounded mean. Segments further off-axis are left
+    untouched -- genuinely diagonal walls must survive."""
+    x1, y1 = w["start"]["x"], w["start"]["y"]
+    x2, y2 = w["end"]["x"], w["end"]["y"]
+    dx, dy = x2 - x1, y2 - y1
+    if dx == 0 and dy == 0:
+        return w
+    ang = math.degrees(math.atan2(dy, dx)) % 180.0
+    off_h = min(ang, 180.0 - ang)  # distance to horizontal (0/180deg)
+    off_v = abs(ang - 90.0)        # distance to vertical (90deg)
+    if off_h <= angle_tol_deg:
+        y_mean = int(round((y1 + y2) / 2.0))
+        w["start"]["y"] = y_mean
+        w["end"]["y"] = y_mean
+    elif off_v <= angle_tol_deg:
+        x_mean = int(round((x1 + x2) / 2.0))
+        w["start"]["x"] = x_mean
+        w["end"]["x"] = x_mean
+    return w
+
+
+def _collinear_merge_candidate(w1, w2, collinear_tol, gap_tol):
+    """If w1, w2 are collinear within collinear_tol and their spans touch or
+    overlap within gap_tol, return (start_pt, end_pt) of the merged union
+    segment (the two extreme original endpoints); else None."""
+    p1 = (w1["start"]["x"], w1["start"]["y"])
+    p2 = (w1["end"]["x"], w1["end"]["y"])
+    p3 = (w2["start"]["x"], w2["start"]["y"])
+    p4 = (w2["end"]["x"], w2["end"]["y"])
+
+    # reference direction from the longer of the two segments, for stability
+    if _pt_dist(p1, p2) >= _pt_dist(p3, p4):
+        origin, tip = p1, p2
+    else:
+        origin, tip = p3, p4
+    dx, dy = tip[0] - origin[0], tip[1] - origin[1]
+    norm = math.hypot(dx, dy)
+    if norm == 0:
+        return None
+    ux, uy = dx / norm, dy / norm
+
+    def proj(p):
+        return (p[0] - origin[0]) * ux + (p[1] - origin[1]) * uy
+
+    def perp(p):
+        return abs((p[0] - origin[0]) * (-uy) + (p[1] - origin[1]) * ux)
+
+    pts = (p1, p2, p3, p4)
+    if max(perp(p) for p in pts) > collinear_tol:
+        return None
+
+    tA_min, tA_max = sorted((proj(p1), proj(p2)))
+    tB_min, tB_max = sorted((proj(p3), proj(p4)))
+    if tB_min <= tA_max and tA_min <= tB_max:
+        gap = 0.0
+    else:
+        gap = max(tB_min - tA_max, tA_min - tB_max)
+    if gap > gap_tol:
+        return None
+
+    ranked = sorted(((proj(p), p) for p in pts), key=lambda t: t[0])
+    return ranked[0][1], ranked[-1][1]
+
+
+def _merge_collinear_group(group, collinear_tol, gap_tol):
+    """Transitively merge collinear, touching/overlapping segments within one
+    label pair's wall list, iterating to a fixed point (so an A-B-C chain
+    collapses to a single segment)."""
+    walls = list(group)
+    changed = True
+    while changed and len(walls) > 1:
+        changed = False
+        for i in range(len(walls)):
+            for j in range(i + 1, len(walls)):
+                res = _collinear_merge_candidate(walls[i], walls[j], collinear_tol, gap_tol)
+                if res is None:
+                    continue
+                start_pt, end_pt = res
+                merged = {
+                    "start": {"x": int(round(start_pt[0])), "y": int(round(start_pt[1]))},
+                    "end": {"x": int(round(end_pt[0])), "y": int(round(end_pt[1]))},
+                    "between": walls[i]["between"],
+                    "exterior": walls[i]["exterior"],
+                }
+                walls = [w for k, w in enumerate(walls) if k not in (i, j)] + [merged]
+                changed = True
+                break
+            if changed:
+                break
+    return walls
+
+
+def _drop_stub_group(group, stub_len):
+    """Drop segments shorter than stub_len, unless doing so would empty the
+    group -- a label pair must never lose all its walls (that would open a
+    hole between two rooms)."""
+    if len(group) <= 1:
+        return list(group)
+    kept, stubs = [], []
+    for w in group:
+        length = _pt_dist((w["start"]["x"], w["start"]["y"]), (w["end"]["x"], w["end"]["y"]))
+        (stubs if length < stub_len else kept).append(w)
+    if not kept:
+        kept = [max(stubs, key=lambda w: _pt_dist(
+            (w["start"]["x"], w["start"]["y"]), (w["end"]["x"], w["end"]["y"])))]
+    return kept
+
+
+def _postprocess_walls(lines, walls, dist, cfg, Himg, Wimg):
+    """Post-process the raw per-boundary-pixel-trace wall segments, per label
+    pair (`between`) since segments from different pairs are different walls
+    and must never merge:
+
+    1. Drop reversed duplicates (1px-wide boundary-curve tracing walks out and
+       back, emitting each real segment ~twice).
+    2. Axis-snap segments within WALL_SNAP_ANGLE_DEG of horizontal/vertical.
+    3. Merge collinear, touching/overlapping segments into single runs.
+    4. Drop surviving stubs shorter than WALL_STUB_LEN_T_MED_FRAC * t_med,
+       unless a label pair would be left with zero walls.
+    """
+    t_med = cfg.get("_t_med", 0.0)
+    dup_tol = cfg["WALL_DUP_TOL_T_MED_FRAC"] * t_med
+    angle_tol = cfg["WALL_SNAP_ANGLE_DEG"]
+    collinear_tol = cfg["WALL_COLLINEAR_T_MED_FRAC"] * t_med
+    gap_tol = cfg["WALL_MERGE_GAP_T_MED_FRAC"] * t_med
+    stub_len = cfg["WALL_STUB_LEN_T_MED_FRAC"] * t_med
+
+    groups = {}
+    for w in walls:
+        groups.setdefault(tuple(w["between"]), []).append(w)
+
+    n_raw = sum(len(g) for g in groups.values())
+
+    for key in list(groups.keys()):
+        groups[key] = _dedupe_reversed(groups[key], dup_tol)
+    n_dedupe = sum(len(g) for g in groups.values())
+
+    for group in groups.values():
+        for w in group:
+            _axis_snap(w, angle_tol)
+
+    for key in list(groups.keys()):
+        groups[key] = _merge_collinear_group(groups[key], collinear_tol, gap_tol)
+    n_merge = sum(len(g) for g in groups.values())
+
+    for key in list(groups.keys()):
+        groups[key] = _drop_stub_group(groups[key], stub_len)
+    n_stubs = sum(len(g) for g in groups.values())
+
+    final = []
+    wid = 0
+    for key, group in groups.items():
+        for w in group:
+            x1, y1 = w["start"]["x"], w["start"]["y"]
+            x2, y2 = w["end"]["x"], w["end"]["y"]
+            mx, my = int((x1 + x2) // 2), int((y1 + y2) // 2)
+            thickness = round(float(2 * dist[np.clip(my, 0, Himg - 1), np.clip(mx, 0, Wimg - 1)]), 1) or round(t_med, 1)
+            final.append({
+                "id": f"w{wid}",
+                "start": {"x": int(x1), "y": int(y1)},
+                "end": {"x": int(x2), "y": int(y2)},
+                "thickness": thickness,
+                "between": list(key),
+                "exterior": bool(w["exterior"]),
+            })
+            wid += 1
+
+    log(lines, f"wall post-process: {n_raw} raw -> dedupe -> {n_dedupe} -> axis-snap "
+                f"-> merge collinear -> {n_merge} -> drop stubs -> {n_stubs} final walls "
+                f"over {len(groups)} label pairs "
+                f"(dup_tol={dup_tol:.1f}px snap_angle={angle_tol:.1f}deg "
+                f"collinear_tol={collinear_tol:.1f}px gap_tol={gap_tol:.1f}px stub_len={stub_len:.1f}px)")
+    return final
+
+
 def stage_regions_and_walls(lines, seal_mask, dist, cfg):
     """Cell 6 (notebook cell index 8) -- rooms-first region extraction + wall derivation."""
     min_area = min_room_area(cfg)
@@ -487,7 +731,16 @@ def stage_regions_and_walls(lines, seal_mask, dist, cfg):
                               "between": [int(la), int(lb)],
                               "exterior": bool(la in exterior or lb in exterior)})
                 wid += 1
-    log(lines, f"derived {len(walls)} wall runs from {len(pairs)} adjacent label pairs")
+    log(lines, f"derived {len(walls)} raw wall runs from {len(pairs)} adjacent label pairs")
+
+    # Post-process the raw derivation: it emits reversed near-duplicates (tracing a
+    # 1px-wide boundary curve walks out and back) and jagged staircase segments
+    # (approxPolyDP faithfully following the pixel staircase of a diagonal-ish
+    # boundary). See the task brief / local/README.md for the measured baseline.
+    walls = _postprocess_walls(lines, walls, dist, cfg, Himg, Wimg)
+    # Parsed by parse_reference_log() for the fidelity check. Must report the FINAL
+    # wall list, not the raw one above, so log and metrics can never disagree.
+    log(lines, f"final {len(walls)} wall runs from {len(pairs)} adjacent label pairs")
 
     return {
         "n": n, "labels": labels, "stats": stats, "cents": cents,
@@ -852,7 +1105,11 @@ def main():
     ap.add_argument("--crop-offset", default="0,0", help="cx0,cy0 -- shift applied to CubiCasa coords "
                     "to land them in the prob-map's pixel frame. 0,0 is correct when --wall-prob is "
                     "already in the same (uncropped) coordinate space as --fixtures/--geometry.")
-    ap.add_argument("--reference-log", default=str(REPO_ROOT / "v9_out.txt"),
+    # Default reference moved off v9_out.txt at the wall post-process change: that
+    # log predates the dedupe/snap/merge pass and its wall_runs=240 is no longer the
+    # expected value. v9_out.txt is still the Kaggle-side ground truth and can be
+    # selected explicitly; local/ref/step2_reference.txt is this branch's snapshot.
+    ap.add_argument("--reference-log", default=str(REPO_ROOT / "local" / "ref" / "step2_reference.txt"),
                     help="notebook run log to diff computed numbers against (fidelity check).")
     ap.add_argument("--out-dir", default=str(LOCAL_DIR / "out"))
     for key, default in CFG.items():

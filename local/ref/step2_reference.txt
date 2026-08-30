@@ -1,0 +1,56 @@
+loaded wall-prob: <repo>\out\wall_prob_crop.npy  shape=(2048, 2730)  offset=(0,0)
+fixtures: <repo>\out-cubicasa\cubicasa_rooms_fixtures.json
+geometry: <repo>\out-cubicasa\sample_geometry.json
+prob map: (2048, 2730) offset (0, 0)
+components: naive@0.5 = 6  ->  hysteresis = 6   (healing metric; ideal ~1)
+t_med = 26.0px  seal kernel = 39px  components after close = 6
+seal layer: 182822 CubiCasa wall px + 16 opening bars (labeling copy only)
+labels: 19  exterior: 1  rooms: 14
+room polygons (closed by construction): [6, 5, 11, 5, 8, 4, 9, 14, 16, 4, 4, 4, 9, 4] vertices
+derived 240 raw wall runs from 45 adjacent label pairs
+wall post-process: 240 raw -> dedupe -> 146 -> axis-snap -> merge collinear -> 75 -> drop stubs -> 73 final walls over 43 label pairs (dup_tol=6.5px snap_angle=10.0deg collinear_tol=13.0px gap_tol=19.5px stub_len=26.0px)
+final 73 wall runs from 45 adjacent label pairs
+consensus: 1 matches / max(14 mitunet, 9 cubicasa) = 0.07
+invariants: {'all_polygons_closed': True, 'min_area_ok': True, 'room_count_sane': True, 'has_rooms': True, 'loose_endpoints_warn': 6}
+routing: hard_fail=False  merged_rooms_note=True  needs_repair=False
+virtual split: 14 regions -> 17 sub-rooms; consensus 0.07 -> 0.06
+{
+  "accepted": true,
+  "reject_reasons": [],
+  "notes": [
+    "merged_rooms"
+  ],
+  "metrics": {
+    "rooms_mitunet": 14,
+    "rooms_cubicasa": 9,
+    "consensus_iou": 0.071,
+    "consensus_raw": 0.071,
+    "matches": 1,
+    "wall_thickness_px": 26.0,
+    "loose_endpoints": 6,
+    "crop_offset": [
+      0,
+      0
+    ]
+  }
+}
+
+=== FIDELITY CHECK vs reference log ===
+OK naive_components: reference=6  computed=6
+OK hysteresis_components: reference=6  computed=6
+OK t_med: reference=26.0  computed=26.0
+OK seal_kernel: reference=39  computed=39
+OK components_after_close: reference=6  computed=6
+OK cubicasa_wall_px: reference=182822  computed=182822
+OK opening_bars: reference=16  computed=16
+OK labels: reference=19  computed=19
+OK exterior: reference=1  computed=1
+OK rooms: reference=14  computed=14
+OK matches: reference=1  computed=1
+OK rooms_mitunet: reference=14  computed=14
+OK rooms_cubicasa: reference=9  computed=9
+OK consensus: reference=0.07  computed=0.07142857142857142
+RESULT: reproduces the reference log numerically.
+
+wrote <repo>\local\out\diagnostics.json
+wrote <repo>\local\out\consensus_overlay.png
