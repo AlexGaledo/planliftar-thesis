@@ -1,0 +1,16 @@
+[?25l   [90m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[0m [32m0.0/154.8 kB[0m [31m?[0m eta [36m-:--:--[0m[2K   [91m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[0m[91m╸[0m [32m153.6/154.8 kB[0m [31m5.9 MB/s[0m eta [36m0:00:01[0m[2K   
+[?25htorch 2.10.0+cu128 | CUDA GPU: Tesla T4
+MitUNet_cubicasa-5k_a62_mit_b4_tversky_7666_30E.pth -> 257.4 MB (expect ~257)
+MitUNet loaded
+prob map: (2480, 3507) range 0.0 - 1.0
+components: naive@0.5 = 10  ->  hysteresis = 10   (healing metric; ideal ~1)
+t_med = 24.0px  seal kernel = 37px  components after close = 9
+sealed 16 fixture openings (labeling copy only — bars never export)
+labels: 1  exterior: 1  rooms: 0
+room polygons (closed by construction): [] vertices
+derived 0 wall runs from 0 adjacent label pairs
+Phase 2 stub
+Phase 2 stub
+Phase 2 stub
+Phase 2 stub
+Phase 3 stub

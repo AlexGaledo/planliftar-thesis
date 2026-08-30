@@ -1,0 +1,41 @@
+MitUNet_cubicasa-5k_a62_mit_b4_tversky_7666_30E.pth -> 257.4 MB (expect ~257)
+MitUNet loaded
+plan fills sheet; no crop
+prob map: (2048, 2730) offset (0, 0)
+components: naive@0.5 = 6  ->  hysteresis = 6   (healing metric; ideal ~1)
+t_med = 26.0px  seal kernel = 39px  components after close = 6
+seal layer: 182822 CubiCasa wall px + 16 opening bars (labeling copy only)
+labels: 19  exterior: 1  rooms: 14
+room polygons (closed by construction): [6, 5, 11, 5, 8, 4, 9, 14, 16, 4, 4, 4, 9, 4] vertices
+derived 240 wall runs from 45 adjacent label pairs
+consensus: 1 matches / max(14 mitunet, 9 cubicasa) = 0.07
+invariants: {'all_polygons_closed': True, 'min_area_ok': True, 'room_count_sane': True, 'has_rooms': True, 'loose_endpoints_warn': 0}
+routing: hard_fail=False  merged_rooms_note=True  needs_repair=False
+virtual split: 14 regions -> 17 sub-rooms; consensus 0.07 -> 0.06
+{
+  "accepted": true,
+  "reject_reasons": [],
+  "notes": [
+    "merged_rooms"
+  ],
+  "metrics": {
+    "rooms_mitunet": 14,
+    "rooms_cubicasa": 9,
+    "consensus_iou": 0.071,
+    "consensus_raw": 0.071,
+    "matches": 1,
+    "wall_thickness_px": 26.0,
+    "loose_endpoints": 0,
+    "crop_offset": [
+      0,
+      0
+    ]
+  }
+}
+exported 244 wall segs (240 pre-carve), 14 rooms
+[?25l   [90m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[0m [32m0.0/745.5 kB[0m [31m?[0m eta [36m-:--:--[0m[2K   [90m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[0m [32m745.5/745.5 kB[0m [31m29.6 MB/s[0m eta [36m0:00:00[0m
+[?25hExported: /kaggle/working/planlift.glb
+Nodes: 244 walls + 1 floor
+Vertices: 1960  Faces: 2940
+Bounding box (m): min=[-10.459, -0.02, -6.326] max=[10.459, 2.5, 6.326] size=[20.919, 2.52, 12.652]
+NO ERRORS

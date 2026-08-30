@@ -1,0 +1,18 @@
+# Large data / vendored trees - never tracked
+out/
+out-cubicasa/
+reference/
+.dist/
+debug_*.png
+
+# Secrets
+**/.certs/
+*.pem
+*.key
+
+# Generated / transient
+__pycache__/
+*.pyc
+local/out/
+local/out_*/
+deliverables/livemap/qa/

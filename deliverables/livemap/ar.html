@@ -1,0 +1,1628 @@
+<!--
+  ar.html - WebXR AR bridge for the Spectator Live Map.
+
+  Open this on an ARCore-capable Android phone in Chrome, on the same WiFi
+  as the laptop running server.py. Tap "Start AR", point the phone at the
+  floor until a ring (reticle) appears, tap the floor to place the
+  floorplan, then walk around - the page streams your pose to the map.
+
+  ---- SECURE ORIGIN REQUIREMENT (read this if "Start AR" is disabled) ----
+  WebXR only runs in a "secure context": HTTPS, or the special-cased
+  http://localhost. server.py serves this page as plain HTTP from a LAN IP
+  (e.g. http://192.168.1.42:8080/ar.html), which Chrome treats as INSECURE,
+  so navigator.xr will be undefined there. Two ways to fix it:
+
+    OPTION A - adb reverse (recommended, no flags to remember):
+      1. Plug the phone into the laptop via USB, enable USB debugging.
+      2. On the laptop:
+           adb reverse tcp:8080 tcp:8080
+           adb reverse tcp:8765 tcp:8765
+      3. On the PHONE, open http://localhost:8080/ar.html (not the LAN IP).
+         adb reverse forwards localhost:8080/8765 on the phone to the same
+         ports on the laptop, and Chrome treats localhost as secure.
+
+    OPTION B - Chrome flag (no cable required, but must be redone if the
+    laptop's IP changes):
+      1. On the phone, open chrome://flags/#unsafely-treat-insecure-origin-as-secure
+      2. Enable it and add the exact origin, e.g. http://192.168.1.42:8080
+      3. Relaunch Chrome, then open that same http://<laptop-ip>:8080/ar.html.
+
+  This page also shows this same hint in the UI when navigator.xr is
+  missing or immersive-ar/hit-test isn't supported.
+
+  ---- COORDINATE CONVENTION (read before touching the math below) ----
+  This mirrors the Unity companion app's conventions (see
+  ../unity/FloorPlanMeshBuilder.cs and ../unity/PoseStreamer.cs) so the
+  dot on index.html behaves identically regardless of which client streams
+  it, but is deliberately SIMPLER: it carries a single ppm (pixels-per-meter)
+  set from one typed dimension rather than Unity's per-wall reference-length
+  calibration flow, and recenters the model on
+  the plan's footprint bounding-box CENTER instead of pixel (0,0), so the
+  tap point lands in the middle of the floorplan rather than its top-left
+  corner (nicer for AR - you tap roughly where you're standing on the
+  plan, not off in a corner).
+
+    ppm = plan pixels per real-world meter (default 100; editable in the
+          Dimensions panel - see the SCALE section below).
+    planOffsetPx = the floorplan's bounding-box CENTER in plan px
+                   (computed once from floorplan.json, logged to console
+                   as "[ar] plan footprint center (px)" - this is the
+                   recentering offset the spec asks to "record").
+
+    plan (px, py) -> local meters, relative to the placed anchor:
+        localX =  (px - planOffsetPx.x) / ppm
+        localZ = -(py - planOffsetPx.y) / ppm
+    (world Y is "up"; the floorplan lies flat on the XZ plane. This is
+    plan (x, y) -> world (x, -y), scaled and recentered, exactly as the
+    spec describes.)
+
+    The placement ignores the hit-test's ORIENTATION (only its position is
+    used), so the model starts axis-aligned rather than inheriting whatever
+    tilt the detected plane had. The user can then yaw it deliberately with
+    rotation_deg.
+
+    A rotated group is fine for the inverse below: worldToLocal() inverts
+    the group's full world matrix, and the yaw derivation already applies
+    the inverse group quaternion to the camera forward vector. An earlier
+    version of this comment claimed identity rotation was REQUIRED - it
+    never was; the code handled rotation all along.
+
+    Inverse (camera pose -> outgoing plan px), undoing the above:
+        px =  localX * ppm + planOffsetPx.x
+        py = -localZ * ppm + planOffsetPx.y
+
+    Yaw: index.html's live-dot heading cone uses
+        dirX = sin(yaw_deg), dirY = -cos(yaw_deg)
+    (see index.html's draw(), the "dx = sin(yaw), dy = -cos(yaw)" comment)
+    meaning yaw=0 points toward plan -Y ("up" on the map), yaw=90 points
+    toward plan +X ("right" on the map), increasing yaw rotates clockwise.
+    Given local forward direction (localForward.x, _, localForward.z) in
+    the same recentered/unrotated local frame as above (+Z there
+    corresponds to plan -Y, +X corresponds to plan +X - re-derive from the
+    localX/localZ formulas above if you don't believe it), the matching
+    yaw is:
+        yaw_deg = atan2(localForward.x, localForward.z) * 180 / PI
+    which is exactly the formula ../unity/PoseStreamer.cs uses
+    (Atan2(localForward.x, localForward.z)) - both clients derive from the
+    same PlanToWorld-style mapping, so this file and PoseStreamer.cs must
+    be changed together if either changes.
+
+  ---- SCALE: TWO INDEPENDENT FACTORS (read before touching the math) ----
+  The exported floorplan is unitless - out/sample_response.json carries
+  "units": "relative_px", "user_scale_required": true - so plan px cannot be
+  turned into meters without the user telling us how big the building is.
+  That is factor one. Factor two is that a 1:1 building does not fit on a
+  desk. They are kept separate on purpose:
+
+    ppm        - plan px per real-world meter. Derived from the user-entered
+                 "longest side of the real building" in the Dimensions panel.
+                 ppm=100 with this plan means the building's longest side is
+                 ~20.4 m. Feeds planToLocal AND localToPlan, so the two stay
+                 inverses no matter what the user types.
+    modelDenom - the miniature factor: the model renders at 1:modelDenom.
+                 Applied ONLY as a uniform scale on the placement group -
+                 never inside the plan<->local mapping.
+
+  Why modelDenom must stay out of the mapping: three.js worldToLocal()
+  inverts the group's full world matrix, scale included, so the camera's
+  local position comes back in UNSCALED group-local meters. localToPlan
+  therefore still yields true plan px, and index.html's dot lands in the
+  right place whether the model is 1:1 or 1:200. If you ever "helpfully"
+  divide by modelDenom in localToPlan too, you will double-apply it and the
+  dot will drift toward the plan's centre. Uniform scale also leaves the
+  group's quaternion untouched, so the yaw derivation below is unaffected.
+
+  The model sits ON the tapped surface: walls are built with their base at
+  group-local y=0 (position.y = wallHeightM/2), and the group's origin is
+  placed at the hit-test point, so y=0 coincides with the detected plane.
+  A thin slab is drawn at y=0 as well - without it the walls read as
+  disconnected boxes floating in space rather than a model resting on the
+  table.
+
+  ---- DEBUG HOOK: ?fake=1 ----
+  Appending ?fake=1 to the URL (e.g. http://localhost:8080/ar.html?fake=1)
+  skips WebXR entirely and instead connects to the WebSocket hub as
+  role=phone and streams a scripted circular "walking loop" of poses
+  around the floorplan's footprint center at 10Hz. This exists purely so
+  the WS handshake/reconnect/throttled-send logic can be exercised from a
+  desktop browser (or tested against server.py) without an actual ARCore
+  phone. See startFakeMode() below.
+-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<!-- TEMPORARY title, per request. Real name: Live Map AR Bridge. -->
+<title>Sword Art Online</title>
+<style>
+  :root {
+    --bg: #0b0e14;
+    --panel: rgba(18, 22, 32, 0.85);
+    --panel-border: rgba(255, 255, 255, 0.08);
+    --text: #e6e9f0;
+    --muted: #7b8496;
+    --accent: #39f0c0;
+    --ok: #39f0c0;
+    --bad: #ff5f6d;
+    --warn: #ffb020;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    padding: 0;
+    width: 100%;
+    height: 100%;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    overflow: hidden;
+  }
+  #sceneContainer {
+    position: fixed;
+    inset: 0;
+  }
+  #sceneContainer canvas {
+    display: block;
+    width: 100%;
+    height: 100%;
+  }
+  #overlay {
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+  }
+  #overlay > * {
+    pointer-events: auto;
+  }
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--panel-border);
+    border-radius: 10px;
+    padding: 10px 14px;
+    font-size: 13px;
+    backdrop-filter: blur(6px);
+    box-shadow: 0 4px 18px rgba(0, 0, 0, 0.35);
+  }
+  .title {
+    position: fixed;
+    top: 14px;
+    left: 14px;
+  }
+  .title b { font-weight: 600; letter-spacing: 0.02em; }
+  .hud {
+    position: fixed;
+    top: 14px;
+    right: 14px;
+    min-width: 170px;
+  }
+  .hud-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    line-height: 1.5;
+  }
+  .hud-row + .hud-row { margin-top: 4px; }
+  .dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex: none;
+    background: var(--bad);
+    box-shadow: 0 0 6px currentColor;
+  }
+  .dot.ok { background: var(--ok); color: var(--ok); }
+  .dot.warn { background: var(--warn); color: var(--warn); }
+  .dot.bad { background: var(--bad); color: var(--bad); }
+  .muted { color: var(--muted); }
+  .chip {
+    display: none;
+    align-items: center;
+    gap: 6px;
+    position: fixed;
+    top: 64px;
+    right: 14px;
+    font-size: 11px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: #0b0e14;
+    background: var(--warn);
+    border-radius: 999px;
+    padding: 4px 10px;
+    font-weight: 700;
+  }
+  .controls {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 24px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+  }
+  .hint {
+    max-width: 90%;
+    text-align: center;
+  }
+  button {
+    font: inherit;
+    font-weight: 600;
+    font-size: 15px;
+    border: none;
+    border-radius: 999px;
+    padding: 14px 32px;
+    cursor: pointer;
+    color: #0b0e14;
+    background: var(--accent);
+    box-shadow: 0 6px 20px rgba(57, 240, 192, 0.35);
+  }
+  button:disabled {
+    background: #3a4150;
+    color: var(--muted);
+    box-shadow: none;
+    cursor: not-allowed;
+  }
+  button.secondary {
+    background: transparent;
+    color: var(--text);
+    border: 1px solid var(--panel-border);
+    padding: 8px 18px;
+    font-size: 13px;
+    box-shadow: none;
+  }
+  .err {
+    position: fixed;
+    bottom: 110px;
+    left: 14px;
+    right: 14px;
+    background: rgba(255, 95, 109, 0.12);
+    border: 1px solid rgba(255, 95, 109, 0.35);
+    color: #ffb3ba;
+    border-radius: 10px;
+    padding: 10px 14px;
+    font-size: 12px;
+    line-height: 1.5;
+    display: none;
+    white-space: pre-line;
+    max-height: 40vh;
+    overflow-y: auto;
+  }
+  #fakePanel {
+    display: none;
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    min-width: 260px;
+    text-align: center;
+  }
+  /* Sits bottom-right, clear of .title (top-left), .hud (top-right) and
+     .controls (bottom-centre). */
+  .ui-toggle {
+    position: fixed;
+    right: 14px;
+    bottom: 14px;
+    padding: 10px 18px;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text);
+    background: var(--panel);
+    border: 1px solid var(--panel-border);
+    box-shadow: none;
+    backdrop-filter: blur(6px);
+  }
+  /* Everything in the overlay goes EXCEPT the toggle - hiding that too would
+     leave no way back into the UI without reloading the page. */
+  #overlay.ui-hidden > *:not(.ui-toggle) { display: none !important; }
+  #overlay.ui-hidden .ui-toggle { opacity: 0.4; }
+
+  #scalePanel { display: none; }
+  #scalePanel .ctl { margin-top: 10px; }
+  #scalePanel label { display: block; font-size: 13px; margin-bottom: 4px; }
+  #scalePanel .row { display: flex; align-items: center; gap: 6px; }
+  #scalePanel input[type="number"] {
+    width: 90px;
+    padding: 6px 8px;
+    border-radius: 6px;
+    border: 1px solid rgba(255,255,255,0.25);
+    background: rgba(0,0,0,0.35);
+    color: inherit;
+    font: inherit;
+  }
+  #scalePanel input[type="range"] { width: 100%; }
+  #scalePanel .chk { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
+  #scalePanel .chk input { width: auto; }
+  #scaleReadout {
+    margin-top: 8px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 12px;
+    line-height: 1.45;
+  }
+  #fakePanel .pose {
+    margin-top: 8px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 13px;
+    color: var(--accent);
+  }
+</style>
+</head>
+<body>
+  <div id="sceneContainer"></div>
+
+  <div id="overlay">
+    <div class="panel title">
+      <b>Sword Art Online</b>
+      <div class="muted" id="planInfo">loading floorplan&hellip;</div>
+    </div>
+
+    <div class="panel hud">
+      <div class="hud-row">
+        <span class="dot bad" id="wsDot"></span>
+        <span id="wsStatus">Connecting&hellip;</span>
+      </div>
+      <div class="hud-row">
+        <span class="muted" id="placedStatus">Not placed</span>
+      </div>
+    </div>
+
+    <div class="chip" id="fakeChip">Fake mode</div>
+
+    <div class="controls">
+      <div class="panel hint" id="placeHint">Checking WebXR support&hellip;</div>
+      <button id="startBtn" disabled>Start AR</button>
+      <button id="placeBtn" style="display:none;">Place here</button>
+      <button id="resetBtn" class="secondary" style="display:none;">Reset placement</button>
+      <div class="panel muted" id="tapInfo" style="display:none;">&mdash;</div>
+
+      <div class="panel" id="scalePanel">
+        <b>Dimensions</b>
+        <div class="ctl">
+          <label for="realSizeInput">Longest side of the real building</label>
+          <div class="row">
+            <input id="realSizeInput" type="number" min="0.5" max="500" step="0.1">
+            <span class="muted">m</span>
+          </div>
+        </div>
+        <div class="ctl">
+          <label for="denomSlider">Model scale &mdash; 1:<span id="denomOut">50</span></label>
+          <input id="denomSlider" type="range" min="5" max="200" step="1" value="50">
+        </div>
+        <div class="ctl">
+          <label for="yawSlider">Rotation &mdash; <span id="yawOut">0</span>&deg;</label>
+          <input id="yawSlider" type="range" min="0" max="359" step="1" value="0">
+        </div>
+        <label class="chk">
+          <input id="autoFitChk" type="checkbox" checked>
+          <span>Fit to the surface I tap</span>
+        </label>
+        <div class="muted" id="scaleReadout">&mdash;</div>
+      </div>
+    </div>
+
+    <button id="uiToggle" class="ui-toggle">Hide UI</button>
+
+    <div class="panel err" id="errBox"></div>
+
+    <div class="panel" id="fakePanel">
+      <b>Fake walking loop</b>
+      <div class="muted">?fake=1 debug mode - no WebXR, streaming synthetic poses</div>
+      <div class="pose" id="fakePose">&mdash;</div>
+    </div>
+  </div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from "three";
+
+"use strict";
+
+// ---------------------------------------------------------------------
+// Config (see the top-of-file comment for the coordinate-convention
+// derivation).
+// ---------------------------------------------------------------------
+// See the SCALE section of the top-of-file comment before changing these.
+let ppm = 100;              // plan px per real-world meter (user-editable)
+let modelDenom = 50;        // miniature factor: model renders at 1:modelDenom
+let autoFit = true;         // fit the miniature to the surface that was tapped
+const DENOM_MIN = 5;
+const DENOM_MAX = 200;
+const SURFACE_FILL = 0.8;   // fit-to-surface leaves a 20% margin all round
+let wallHeightM = 2.5;      // real-world wall height, m
+let wallOpacity = 0.35;     // wall material opacity
+let modelYawDeg = 0;        // yaw of the placed model, degrees clockwise from above
+const HEIGHT_MIN = 0.1, HEIGHT_MAX = 10;
+const OPACITY_MIN = 0.05, OPACITY_MAX = 1;
+const REAL_LONGEST_MIN = 0.5, REAL_LONGEST_MAX = 500;
+const SEND_HZ = 10;
+const SEND_INTERVAL_MS = 1000 / SEND_HZ;
+const WS_PORT = 8765;
+const RECONNECT_MIN_MS = 1000;
+const RECONNECT_MAX_MS = 10000;
+const RECONNECT_GROWTH = 1.6;
+
+const params = new URLSearchParams(location.search);
+const FAKE_MODE = params.get("fake") === "1";
+
+// ---------------------------------------------------------------------
+// DOM refs
+// ---------------------------------------------------------------------
+const startBtn = document.getElementById("startBtn");
+const resetBtn = document.getElementById("resetBtn");
+const wsDot = document.getElementById("wsDot");
+const wsStatus = document.getElementById("wsStatus");
+const placeHint = document.getElementById("placeHint");
+const placedStatus = document.getElementById("placedStatus");
+const errBox = document.getElementById("errBox");
+const fakeChip = document.getElementById("fakeChip");
+const planInfoEl = document.getElementById("planInfo");
+const sceneContainer = document.getElementById("sceneContainer");
+const overlayRoot = document.getElementById("overlay");
+const fakePanel = document.getElementById("fakePanel");
+const fakePoseEl = document.getElementById("fakePose");
+const placeBtn = document.getElementById("placeBtn");
+const tapInfo = document.getElementById("tapInfo");
+const uiToggle = document.getElementById("uiToggle");
+const scalePanel = document.getElementById("scalePanel");
+const realSizeInput = document.getElementById("realSizeInput");
+const denomSlider = document.getElementById("denomSlider");
+const denomOut = document.getElementById("denomOut");
+const yawSlider = document.getElementById("yawSlider");
+const yawOut = document.getElementById("yawOut");
+const autoFitChk = document.getElementById("autoFitChk");
+const scaleReadout = document.getElementById("scaleReadout");
+
+// Without these, an exception thrown inside an XR event callback or a
+// rejected promise disappears entirely - the page just appears to ignore
+// you, which is indistinguishable from "the event never fired".
+window.addEventListener("error", (e) => {
+  appendError("JS error: " + (e.message || e.error) +
+              (e.filename ? ` (${e.filename}:${e.lineno})` : ""));
+});
+window.addEventListener("unhandledrejection", (e) => {
+  appendError("Unhandled promise rejection: " + (e.reason && e.reason.message || e.reason));
+});
+
+function showError(msg) {
+  errBox.textContent = msg;
+  errBox.style.display = "block";
+}
+
+function appendError(msg) {
+  errBox.textContent = errBox.textContent ? errBox.textContent + "\n\n" + msg : msg;
+  errBox.style.display = "block";
+}
+
+const SECURE_ORIGIN_HINT =
+  "Insecure origin: WebXR needs HTTPS or localhost. Fix it one of two ways:\n" +
+  "  A) On the laptop: adb reverse tcp:8080 tcp:8080 && adb reverse tcp:8765 tcp:8765\n" +
+  "     then open http://localhost:8080/ar.html on the PHONE.\n" +
+  "  B) On the phone, open chrome://flags/#unsafely-treat-insecure-origin-as-secure,\n" +
+  "     add this exact origin (" + location.origin + "), enable it, relaunch Chrome.";
+
+// ---------------------------------------------------------------------
+// WebSocket (role=phone), mirrors index.html's connect()/backoff exactly
+// so both clients behave identically against server.py's hub.
+// ---------------------------------------------------------------------
+let socket = null;
+let reconnectDelay = RECONNECT_MIN_MS;
+let reconnectTimer = null;
+
+function wsUrl() {
+  // Match the page's own scheme: a page served over https CANNOT open a
+  // plain ws:// socket - the browser blocks it as mixed content, with no
+  // certificate interstitial and no useful error. Over https the hub is
+  // reached as wss:// on the same host.
+  const scheme = location.protocol === "https:" ? "wss" : "ws";
+  return `${scheme}://${location.hostname}:${WS_PORT}`;
+}
+
+function setWsStatus(state, text) {
+  wsDot.className = "dot " + state;
+  wsStatus.textContent = text;
+}
+
+function connectWs() {
+  setWsStatus("warn", "Connecting…");
+  let s;
+  try {
+    s = new WebSocket(wsUrl());
+  } catch (e) {
+    scheduleReconnect();
+    return;
+  }
+  socket = s;
+
+  s.onopen = () => {
+    reconnectDelay = RECONNECT_MIN_MS;
+    setWsStatus("ok", "Connected");
+    s.send(JSON.stringify({ role: "phone" }));
+    sendState();   // so a panel already open picks us up immediately
+  };
+
+  s.onmessage = (event) => onHubMessage(event.data);
+
+  s.onclose = () => {
+    if (socket === s) socket = null;
+    setWsStatus("bad", "Disconnected — reconnecting…");
+    scheduleReconnect();
+  };
+
+  s.onerror = () => {
+    try { s.close(); } catch (e) { /* already closing */ }
+  };
+}
+
+function scheduleReconnect() {
+  clearTimeout(reconnectTimer);
+  reconnectTimer = setTimeout(connectWs, reconnectDelay);
+  reconnectDelay = Math.min(RECONNECT_MAX_MS, reconnectDelay * RECONNECT_GROWTH);
+}
+
+function sendPose(x, y, yawDeg) {
+  if (!socket || socket.readyState !== WebSocket.OPEN) return false;
+  socket.send(JSON.stringify({ x, y, yaw_deg: yawDeg }));
+  return true;
+}
+
+// ---------------------------------------------------------------------
+// Control plane - see PROTOCOL.md for the wire format.
+//
+// The laptop panel sends {"type":"control","patch":{...}}. This phone is the
+// AUTHORITY over its own settings: it clamps every value, applies the keys it
+// recognises, silently ignores the rest, and then reports what actually took
+// effect as a {"type":"state",...} message. Viewers render their panel from
+// that state, never from what they last sent - which is what keeps a second
+// panel, a reconnect, or an auto-fit-on-placement from showing a lie.
+// ---------------------------------------------------------------------
+let xrStatus = "idle";      // idle | active | fake | unsupported
+
+const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+const asNum = (v) => (typeof v === "number" && isFinite(v) ? v : null);
+
+function currentState() {
+  const { w, d } = realFootprintM();
+  return {
+    real_longest_m: Math.max(w, d),
+    model_denom: modelDenom,
+    auto_fit: autoFit,
+    wall_height_m: wallHeightM,
+    wall_opacity: wallOpacity,
+    rotation_deg: modelYawDeg,
+    placed: placed,
+    plan_w_m: w,
+    plan_d_m: d,
+    model_w_cm: (w / modelDenom) * 100,
+    model_d_cm: (d / modelDenom) * 100,
+    xr: xrStatus,
+  };
+}
+
+function sendState() {
+  if (!socket || socket.readyState !== WebSocket.OPEN) return;
+  socket.send(JSON.stringify({ type: "state", state: currentState() }));
+}
+
+function applyControlPatch(patch) {
+  if (!patch || typeof patch !== "object") return;
+  // ppm and wall height live inside the plan->local mapping / geometry, so
+  // they force a rebuild. model_denom and opacity do not.
+  let rebuild = false;
+
+  const longest = asNum(patch.real_longest_m);
+  if (longest !== null) {
+    const meters = clamp(longest, REAL_LONGEST_MIN, REAL_LONGEST_MAX);
+    const longestPx = Math.max(planBoundsPx.widthPx, planBoundsPx.heightPx);
+    if (longestPx > 0) {
+      ppm = longestPx / meters;
+      rebuild = true;
+    }
+  }
+
+  const denom = asNum(patch.model_denom);
+  if (denom !== null) {
+    modelDenom = clamp(denom, DENOM_MIN, DENOM_MAX);
+    applyModelScale();
+  }
+
+  if (typeof patch.auto_fit === "boolean") autoFit = patch.auto_fit;
+
+  const height = asNum(patch.wall_height_m);
+  if (height !== null) {
+    wallHeightM = clamp(height, HEIGHT_MIN, HEIGHT_MAX);
+    rebuild = true;
+  }
+
+  const opacity = asNum(patch.wall_opacity);
+  if (opacity !== null) {
+    wallOpacity = clamp(opacity, OPACITY_MIN, OPACITY_MAX);
+    if (wallMaterial) wallMaterial.opacity = wallOpacity;
+  }
+
+  const yaw = asNum(patch.rotation_deg);
+  if (yaw !== null) {
+    modelYawDeg = ((yaw % 360) + 360) % 360;   // wrap, so 370 and -350 both mean 10
+    applyModelRotation();
+  }
+
+  if (patch.reset_placement === true) resetPlacementState();
+
+  if (rebuild) rebuildPlacedGeometry();
+  syncScaleUi();
+  sendState();
+}
+
+function onHubMessage(raw) {
+  let msg;
+  try {
+    msg = JSON.parse(raw);
+  } catch (e) {
+    return;
+  }
+  if (!msg || typeof msg !== "object") return;
+  // PROTOCOL.md: an untyped message is a pose, which a phone never receives.
+  // Unknown types are ignored so the protocol can grow without breaking us.
+  if (msg.type === "control") applyControlPatch(msg.patch);
+  else if (msg.type === "hello") sendState();
+}
+
+// ---------------------------------------------------------------------
+// Floorplan data + plan px <-> local meters mapping (see top-of-file
+// comment for the derivation).
+// ---------------------------------------------------------------------
+let planData = null;
+let planOffsetPx = { x: 0, y: 0 };
+let planBoundsPx = { minX: 0, minY: 0, maxX: 0, maxY: 0, widthPx: 0, heightPx: 0 };
+
+function collectPlanPoints(data) {
+  const pts = [];
+  (data.walls || []).forEach((w) => {
+    if (w.start) pts.push(w.start);
+    if (w.end) pts.push(w.end);
+  });
+  (data.rooms || []).forEach((r) => {
+    (r.polygon || []).forEach((p) => pts.push(p));
+  });
+  return pts;
+}
+
+function computeFootprintBounds(data) {
+  const pts = collectPlanPoints(data);
+  const empty = { minX: 0, minY: 0, maxX: 0, maxY: 0, widthPx: 0, heightPx: 0 };
+  if (pts.length === 0) return empty;
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const p of pts) {
+    if (p.x < minX) minX = p.x;
+    if (p.x > maxX) maxX = p.x;
+    if (p.y < minY) minY = p.y;
+    if (p.y > maxY) maxY = p.y;
+  }
+  return { minX, minY, maxX, maxY, widthPx: maxX - minX, heightPx: maxY - minY };
+}
+
+function computeFootprintCenter(data) {
+  const b = computeFootprintBounds(data);
+  return { x: (b.minX + b.maxX) / 2, y: (b.minY + b.maxY) / 2 };
+}
+
+// plan px -> local meters, recentered on the footprint center so the tap
+// point lands at the plan's midpoint (not pixel 0,0).
+function planToLocal(px, py) {
+  const lx = (px - planOffsetPx.x) / ppm;
+  const lz = -(py - planOffsetPx.y) / ppm;
+  return new THREE.Vector3(lx, 0, lz);
+}
+
+// Inverse of planToLocal - undoes the recentering + scale, used every
+// frame to turn the camera's local position back into plan px for the
+// outgoing pose message.
+function localToPlan(localX, localZ) {
+  const px = localX * ppm + planOffsetPx.x;
+  const py = -localZ * ppm + planOffsetPx.y;
+  return { x: px, y: py };
+}
+
+// Which plan to load. Defaults to the hand-authored bungalow: the CubiCasa
+// sample is a real model output whose segmentation is poor (one merged region
+// over half the building, 244 wall runs), which makes AR problems impossible
+// to tell apart from geometry problems. Pass ?plan=cubicasa for that one.
+function planUrl() {
+  const name = new URLSearchParams(location.search).get("plan") || "bungalow";
+  // Only a bare name is accepted - no slashes, so the query string cannot be
+  // used to point the fetch somewhere else.
+  const safe = /^[a-z0-9_-]+$/i.test(name) ? name : "bungalow";
+  return `plans/${safe}.json`;
+}
+
+async function loadFloorplan() {
+  const res = await fetch(planUrl(), { cache: "no-store" });
+  if (!res.ok) throw new Error("HTTP " + res.status);
+  const data = await res.json();
+  planData = data;
+  planBoundsPx = computeFootprintBounds(data);
+  planOffsetPx = { x: (planBoundsPx.minX + planBoundsPx.maxX) / 2,
+                   y: (planBoundsPx.minY + planBoundsPx.maxY) / 2 };
+  const wallCount = (data.walls || []).length;
+  const roomCount = (data.rooms || []).length;
+  planInfoEl.textContent = `${wallCount} walls, ${roomCount} rooms`;
+  // "record the px offset used" (per spec) - logged once at load time.
+  console.info(
+    "[ar] plan footprint center (px), used as the recentering offset:",
+    planOffsetPx
+  );
+  return data;
+}
+
+let wallMaterial = null;
+
+function buildFloorplanGroup(data) {
+  const group = new THREE.Group();
+  group.name = "floorplan";
+
+  // Held in a module-level ref so a wall_opacity control patch can change it
+  // without rebuilding 240-odd box meshes.
+  const material = new THREE.MeshBasicMaterial({
+    color: 0x5ac8ea,
+    transparent: true,
+    opacity: wallOpacity,
+    side: THREE.DoubleSide,
+    depthWrite: false, // translucent boxes: let far walls show through near ones
+  });
+
+  (data.walls || []).forEach((w) => {
+    if (!w.start || !w.end) return;
+    const p1 = planToLocal(w.start.x, w.start.y);
+    const p2 = planToLocal(w.end.x, w.end.y);
+    const delta = new THREE.Vector3().subVectors(p2, p1);
+    const length = Math.max(0.0001, delta.length()); // degenerate zero-length wall guard
+    const thicknessM = Math.max(0.02, (w.thickness || 4) / ppm);
+
+    const geom = new THREE.BoxGeometry(thicknessM, wallHeightM, length);
+    const mesh = new THREE.Mesh(geom, material);
+
+    const mid = new THREE.Vector3().addVectors(p1, p2).multiplyScalar(0.5);
+    mesh.position.set(mid.x, wallHeightM / 2, mid.z);
+    // Align the box's local +Z ("length" axis) with delta - same
+    // atan2(dx, dz) form as the yaw formula below, since both rotate a
+    // +Z-forward vector to point along a direction in the XZ plane.
+    mesh.rotation.y = Math.atan2(delta.x, delta.z);
+
+    group.add(mesh);
+  });
+  wallMaterial = material;
+
+  // Slab at group-local y=0, i.e. flush with the surface that was tapped.
+  // Without it the walls read as disconnected boxes hanging in mid-air;
+  // with it the whole thing reads as one model resting on the table.
+  const slabW = planBoundsPx.widthPx / ppm;
+  const slabD = planBoundsPx.heightPx / ppm;
+  if (slabW > 0 && slabD > 0) {
+    const slab = new THREE.Mesh(
+      new THREE.BoxGeometry(slabW * 1.04, 0.02, slabD * 1.04),
+      new THREE.MeshBasicMaterial({
+        color: 0x0e2630,
+        transparent: true,
+        opacity: 0.55,
+        side: THREE.DoubleSide,
+      })
+    );
+    slab.position.set(0, -0.01, 0);
+    slab.name = "floor";
+    group.add(slab);
+  }
+
+  return group;
+}
+
+// =======================================================================
+// FAKE MODE (?fake=1): skip WebXR, stream a scripted circular walking
+// loop so the WS handshake/reconnect/send-throttle logic can be tested
+// from any browser (or headlessly) without an ARCore phone.
+// =======================================================================
+function startFakeMode() {
+  xrStatus = "fake";
+  fakeChip.style.display = "inline-flex";
+  fakePanel.style.display = "block";
+  startBtn.style.display = "none";
+  resetBtn.style.display = "none";
+  placeHint.textContent = "Fake mode: streaming a scripted walking loop, no WebXR.";
+
+  connectWs();
+
+  const center = planData ? computeFootprintCenter(planData) : { x: 0, y: 0 };
+  const radiusPx = 250;
+  let t = 0;
+  let prev = null;
+  let yawDeg = 0;
+  let sent = 0;
+
+  setInterval(() => {
+    t += 0.06;
+    const x = center.x + Math.cos(t) * radiusPx;
+    const y = center.y + Math.sin(t) * radiusPx;
+
+    if (prev) {
+      const dx = x - prev.x;
+      const dy = y - prev.y;
+      if (dx * dx + dy * dy > 1e-6) {
+        // Same convention as index.html: dirX = sin(yaw), dirY = -cos(yaw).
+        yawDeg = (Math.atan2(dx, -dy) * 180) / Math.PI;
+      }
+    }
+    prev = { x, y };
+
+    const ok = sendPose(x, y, yawDeg);
+    if (ok) sent++;
+    fakePoseEl.textContent =
+      `x=${x.toFixed(1)} y=${y.toFixed(1)} yaw=${yawDeg.toFixed(1)}°  (sent=${sent})`;
+  }, SEND_INTERVAL_MS);
+}
+
+// =======================================================================
+// WebXR / three.js AR session
+// =======================================================================
+let renderer, scene, camera;
+let reticle;
+let hitTestSource = null;
+let placementGroup = null;
+let placed = false;
+let xrSession = null;
+let lastSendAt = 0;
+// An XRFrame is only valid DURING its own callback - touching it afterwards
+// throws InvalidStateError ("XRFrame access outside the callback that
+// produced it is invalid"). An earlier version stashed the frame and read
+// frame.detectedPlanes from the tap handler; that is exactly the illegal
+// pattern, and it failed on device.
+//
+// So the surface measurement happens inside the frame callback, and only the
+// resulting NUMBER (metres) is cached for the tap handler to use.
+let placementAnchor = null;   // XRAnchor, when the device grants "anchors"
+// Anchor telemetry. "anchor: yes" only proves an XRAnchor object exists; it
+// says nothing about whether the runtime is still tracking it or how much it
+// is moving. These numbers separate the three ways this can look unstable:
+//   drift  - anchor pose steadily walking away from where it was created
+//            (re-localisation; the anchor is doing its job, the map moved)
+//   jitter - anchor pose twitching frame to frame (poor tracking quality:
+//            low texture, low light, or a featureless surface)
+//   untracked - runtime lost the anchor, so nothing is correcting anything
+const anchorStats = { updates: 0, untracked: 0, driftM: 0, jitterM: 0, snaps: 0, origin: null };
+let lastAnchorFrameAt = 0;
+
+// Camera travel since placement. This distinguishes the one failure that no
+// amount of anchoring can fix: a runtime tracking only ROTATION (3-DOF).
+// Under 3-DOF the reported camera position barely changes however far you
+// actually walk, so world-locked content appears to travel with you - which
+// looks exactly like "it follows me a little". If you walk a metre and
+// camTravel reads a few cm, the tracking never saw the movement, and the
+// model is faithfully world-locked to a world that is not moving.
+const camStats = { origin: null, travelM: 0, maxM: 0 };
+
+// Anchor smoothing. ARCore's anchor pose twitches frame to frame when
+// tracking quality dips (fast motion, low texture), and following it raw
+// makes the model visibly shiver and snap.
+//
+// SMOOTH_TAU is a time constant, not a per-frame blend factor: the alpha is
+// recomputed from the real frame delta each tick, so the damping feels the
+// same at 30fps and 90fps and does not turn to mush if frames are dropped -
+// which is exactly when the shivering is worst.
+//
+// SNAP_M exists because smoothing a LARGE correction is wrong. A big jump
+// means the runtime re-localised and genuinely changed its mind about where
+// the room is; easing into that reads as the model sliding across the table
+// under its own power. Past this distance we take the correction instantly
+// and let it look like what it is.
+// When the runtime returns no hit at all, the reticle is placed by geometry
+// instead of by tracking: the camera's forward ray is intersected with a
+// horizontal plane a little below the camera. It is a guess, shown in amber
+// rather than green so it is never mistaken for a real surface reading - but
+// it means you can always place something, on any surface, immediately.
+const FALLBACK_DROP_M = 0.5;    // assumed height of the surface below the camera
+const FALLBACK_MIN_M = 0.25;    // clamp the guess to a sane arm's-length range
+const FALLBACK_MAX_M = 2.5;
+const FALLBACK_DEFAULT_M = 0.7; // used when the camera is not pointing downward
+const RETICLE_TRACKED = 0x39f0c0;
+const RETICLE_ESTIMATED = 0xffb020;
+
+const SMOOTH_TAU = 0.12;   // seconds to close ~63% of the gap
+const SNAP_M = 0.25;       // corrections beyond this are applied instantly
+let pendingPlace = false;     // a tap happened; place on the next live frame
+let surfaceExtentAtReticle = null;
+let lastSurfaceProbeAt = 0;
+let lastTapDebugAt = 0;
+const SURFACE_PROBE_MS = 250;
+
+function initThree() {
+  scene = new THREE.Scene();
+  camera = new THREE.PerspectiveCamera(
+    70,
+    window.innerWidth / window.innerHeight,
+    0.01,
+    50
+  );
+
+  renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+  renderer.setPixelRatio(window.devicePixelRatio);
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.setClearColor(0x000000, 0); // transparent, so AR camera passthrough shows through
+  renderer.xr.enabled = true;
+  sceneContainer.appendChild(renderer.domElement);
+
+  reticle = new THREE.Mesh(
+    new THREE.RingGeometry(0.08, 0.1, 32).rotateX(-Math.PI / 2),
+    new THREE.MeshBasicMaterial({ color: 0x39f0c0 })
+  );
+  reticle.matrixAutoUpdate = false;
+  reticle.visible = false;
+  scene.add(reticle);
+
+  window.addEventListener("resize", onWindowResize);
+}
+
+function onWindowResize() {
+  if (!camera || !renderer) return;
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+}
+
+async function checkXrSupport() {
+  const insecure =
+    location.protocol !== "https:" &&
+    location.hostname !== "localhost" &&
+    location.hostname !== "127.0.0.1";
+
+  if (insecure) {
+    appendError(SECURE_ORIGIN_HINT);
+  }
+
+  if (!navigator.xr) {
+    placeHint.textContent = "WebXR is not available in this browser.";
+    xrStatus = "unsupported";
+    if (!insecure) {
+      appendError(
+        "navigator.xr is undefined. Use Chrome for Android on an ARCore-capable device."
+      );
+    }
+    return;
+  }
+
+  try {
+    const supported = await navigator.xr.isSessionSupported("immersive-ar");
+    if (!supported) {
+      placeHint.textContent = "This device/browser does not support immersive-ar.";
+      xrStatus = "unsupported";
+      appendError(
+        "navigator.xr.isSessionSupported('immersive-ar') returned false. " +
+          "Requires Chrome for Android on an ARCore-capable device with " +
+          "Google Play Services for AR installed."
+      );
+      return;
+    }
+  } catch (e) {
+    placeHint.textContent = "WebXR support check failed.";
+    appendError("isSessionSupported() threw: " + e.message);
+    return;
+  }
+
+  startBtn.disabled = false;
+  placeHint.textContent = "Tap Start AR, then point at the floor.";
+}
+
+startBtn.addEventListener("click", onStartAr);
+resetBtn.addEventListener("click", () => resetPlacementState());
+placeBtn.addEventListener("click", () => tryPlace());
+
+async function onStartAr() {
+  if (!navigator.xr) return;
+  startBtn.disabled = true;
+  try {
+    const session = await navigator.xr.requestSession("immersive-ar", {
+      requiredFeatures: ["hit-test"],
+      // plane-detection is what makes "fit to the surface I tap" work: it
+      // gives us each detected plane's polygon, hence its real extent. It is
+      // OPTIONAL - where the browser lacks it, surfaceExtentAt() returns null
+      // and the slider value is used unchanged.
+      // local-floor is NOT guaranteed for immersive-ar - the spec only
+      // promises "viewer" and "local" - so it has to be asked for, and may
+      // still be refused. See the reference-space handling below.
+      // "anchors" is what keeps a placed model glued to a real-world spot.
+      // Without it the model sits at a fixed coordinate in the session's
+      // reference space, and ARCore's ongoing re-localisation makes that
+      // coordinate drift relative to the room - the model appears to follow
+      // the camera slightly.
+      optionalFeatures: ["dom-overlay", "plane-detection", "local-floor", "anchors"],
+      domOverlay: { root: overlayRoot },
+    });
+
+    xrSession = session;
+    session.addEventListener("end", onSessionEnd);
+
+    // three.js defaults renderer.xr's reference space to "local-floor". On a
+    // device that did not grant it, setSession() then throws "this device
+    // does not support the requested reference space type" and AR never
+    // starts. Ask the session what it actually granted, and fall back to
+    // "local", which every immersive-ar session has.
+    //
+    // Losing local-floor costs us nothing here: it would put the origin at
+    // floor level, but the model is anchored to a hit-test result, which
+    // already carries its own real-world height.
+    const granted = session.enabledFeatures || [];
+    const spaceType = granted.includes("local-floor") ? "local-floor" : "local";
+    renderer.xr.setReferenceSpaceType(spaceType);
+
+    try {
+      await renderer.xr.setSession(session);
+    } catch (e) {
+      // enabledFeatures is not reported by every browser build, so treat a
+      // failure here as "local-floor was a bad guess" and retry once.
+      if (spaceType === "local-floor") {
+        renderer.xr.setReferenceSpaceType("local");
+        await renderer.xr.setSession(session);
+      } else {
+        throw e;
+      }
+    }
+    console.info("[ar] reference space:", renderer.xr.getReferenceSpace() ? spaceType : "none",
+                 "| granted features:", granted);
+
+    startBtn.style.display = "none";
+    resetBtn.style.display = "inline-block";
+    placeBtn.style.display = "inline-block";
+    tapInfo.style.display = "block";
+    xrStatus = "active";
+    sendState();
+    placeHint.textContent = "Point at a detected floor, then tap to place the floorplan.";
+
+    const viewerSpace = await session.requestReferenceSpace("viewer");
+    // entityTypes defaults to ["plane"], which means the reticle only appears
+    // once ARCore has promoted a surface to a full plane - that needs visual
+    // texture, so tiles work and a plain table often never does. Adding
+    // "point" lets the ray land on raw feature points long before a plane
+    // exists. Not every runtime accepts the option, hence the fallback.
+    try {
+      hitTestSource = await session.requestHitTestSource({
+        space: viewerSpace,
+        entityTypes: ["plane", "point"],
+      });
+    } catch (e) {
+      hitTestSource = await session.requestHitTestSource({ space: viewerSpace });
+    }
+
+    session.addEventListener("select", onSelect);
+
+    renderer.setAnimationLoop(onXrFrame);
+  } catch (e) {
+    startBtn.disabled = false;
+    showError("Failed to start AR session: " + e.message);
+  }
+}
+
+function onSessionEnd() {
+  if (hitTestSource) {
+    hitTestSource.cancel();
+    hitTestSource = null;
+  }
+  xrSession = null;
+  renderer.setAnimationLoop(null);
+  xrStatus = "idle";
+  resetPlacementState();
+  startBtn.style.display = "inline-block";
+  startBtn.disabled = false;
+  resetBtn.style.display = "none";
+  placeBtn.style.display = "none";
+  tapInfo.style.display = "none";
+  placeHint.textContent = "AR session ended. Tap Start AR to begin again.";
+}
+
+let selectCount = 0;
+
+function tapDebug(note) {
+  const surf = surfaceExtentAtReticle
+    ? `${(surfaceExtentAtReticle * 100).toFixed(0)}cm`
+    : "none";
+  const anch = placementAnchor
+    ? `yes upd=${anchorStats.updates} lost=${anchorStats.untracked} ` +
+      `drift=${(anchorStats.driftM * 100).toFixed(1)}cm ` +
+      `jit=${(anchorStats.jitterM * 1000).toFixed(1)}mm snap=${anchorStats.snaps}`
+    : "no";
+  const cam = camStats.origin
+    ? ` | camTravel=${(camStats.travelM * 100).toFixed(0)}cm max=${(camStats.maxM * 100).toFixed(0)}cm`
+    : "";
+  const ret = reticle && reticle.visible
+    ? (reticleEstimated ? "estimated" : "tracked")
+    : "hidden";
+  tapInfo.textContent =
+    `taps: ${selectCount} | reticle: ${ret} | ` +
+    `surface: ${surf} | placed: ${placed} | anchor: ${anch}${cam}` +
+    `${note ? " | " + note : ""}`;
+}
+
+// The XR "select" path. With dom-overlay active, a tap that lands on overlay
+// DOM is consumed by the DOM and never becomes an XR select - hence the
+// Place-here button below, which does not depend on this firing at all.
+// Project the camera's forward ray onto an assumed horizontal surface below
+// it. Purely geometric - no tracking data involved beyond the camera pose,
+// which is always available.
+function estimateReticle() {
+  if (!renderer.xr.isPresenting) return;
+  const xrCam = renderer.xr.getCamera();
+  xrCam.getWorldPosition(_estPos);
+  _estDir.set(0, 0, -1).applyQuaternion(xrCam.getWorldQuaternion(_estQuat));
+
+  const planeY = _estPos.y - FALLBACK_DROP_M;
+  let t = FALLBACK_DEFAULT_M;
+  if (_estDir.y < -0.05) {
+    t = (planeY - _estPos.y) / _estDir.y;   // ray-plane intersection
+  }
+  t = Math.min(FALLBACK_MAX_M, Math.max(FALLBACK_MIN_M, t));
+
+  _estPos.addScaledVector(_estDir, t);
+  _estPos.y = planeY;                        // keep it flat, not on the ray
+  // Translation only: the ring geometry is already baked flat, so identity
+  // rotation lies horizontal.
+  reticle.matrix.makeTranslation(_estPos.x, _estPos.y, _estPos.z);
+  reticle.visible = true;
+  reticleEstimated = true;
+  reticle.material.color.setHex(RETICLE_ESTIMATED);
+}
+
+function onSelect() {
+  selectCount++;
+  tapDebug("select fired");
+  tryPlace();
+}
+
+// Placement is deferred by one frame on purpose. Creating an anchor requires
+// the live XRHitTestResult, and hit-test results - like XRFrame itself - are
+// only valid inside the frame callback that produced them. So the tap only
+// raises a flag; onXrFrame does the work while it still legally can.
+function tryPlace() {
+  if (placed) { tapDebug("already placed"); return; }
+  if (!reticle || !reticle.visible) { tapDebug("no reticle - aim at a surface"); return; }
+  pendingPlace = true;
+  tapDebug("placing...");
+}
+
+function applyModelRotation() {
+  if (placementGroup) placementGroup.rotation.y = THREE.MathUtils.degToRad(-modelYawDeg);
+}
+
+function applyModelScale() {
+  // Uniform scale on the group only - see the SCALE section at the top of
+  // this file for why this must not leak into planToLocal/localToPlan.
+  if (placementGroup) placementGroup.scale.setScalar(1 / modelDenom);
+}
+
+// Real-world size of the building at the current ppm, in meters.
+function realFootprintM() {
+  return { w: planBoundsPx.widthPx / ppm, d: planBoundsPx.heightPx / ppm };
+}
+
+// Smallest horizontal detected plane containing worldPos, as its shorter
+// side length in meters. "Smallest containing" is deliberate: tapping a
+// mousepad on a desk on a floor yields three nested horizontal planes, and
+// the one the user meant is the tightest one around the tap.
+function surfaceExtentAt(worldPos, frame, refSpace) {
+  if (!frame || !refSpace || !frame.detectedPlanes) return null;
+
+  let best = null;
+  const inv = new THREE.Matrix4();
+  const local = new THREE.Vector3();
+
+  for (const plane of frame.detectedPlanes) {
+    if (plane.orientation !== "horizontal") continue;
+    const planePose = frame.getPose(plane.planeSpace, refSpace);
+    if (!planePose) continue;
+
+    inv.fromArray(planePose.transform.matrix).invert();
+    local.copy(worldPos).applyMatrix4(inv);
+
+    let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
+    for (const pt of plane.polygon) {
+      if (pt.x < minX) minX = pt.x;
+      if (pt.x > maxX) maxX = pt.x;
+      if (pt.z < minZ) minZ = pt.z;
+      if (pt.z > maxZ) maxZ = pt.z;
+    }
+    if (!isFinite(minX) || !isFinite(minZ)) continue;
+    // Bounding-box containment, not true point-in-polygon: planes are
+    // near-rectangular in practice and the tap only has to pick a plane,
+    // not be validated against it.
+    if (local.x < minX || local.x > maxX || local.z < minZ || local.z > maxZ) continue;
+
+    const shorter = Math.min(maxX - minX, maxZ - minZ);
+    if (shorter > 0 && (best === null || shorter < best)) best = shorter;
+  }
+  return best;
+}
+
+// Denominator that makes the model's longest side fill SURFACE_FILL of the
+// tapped surface's shorter side. Null when there is nothing to fit to.
+function denomToFitSurface() {
+  const extent = surfaceExtentAtReticle;
+  if (!extent) return null;
+  const { w, d } = realFootprintM();
+  const longest = Math.max(w, d);
+  if (longest <= 0) return null;
+  return THREE.MathUtils.clamp(longest / (SURFACE_FILL * extent), DENOM_MIN, DENOM_MAX);
+}
+
+// ppm changes the plan->local mapping, so the geometry has to be rebuilt;
+// modelDenom does not, so it only ever calls applyModelScale().
+function rebuildPlacedGeometry() {
+  if (!placed || !placementGroup) return;
+  const pos = placementGroup.position.clone();
+  scene.remove(placementGroup);
+  placementGroup = buildFloorplanGroup(planData);
+  placementGroup.position.copy(pos);
+  applyModelScale();
+  applyModelRotation();
+  scene.add(placementGroup);
+}
+
+function placeFloorplanAtReticle() {
+  const pos = new THREE.Vector3();
+  const quat = new THREE.Quaternion();
+  const scaleV = new THREE.Vector3();
+  reticle.matrix.decompose(pos, quat, scaleV);
+
+  if (placementGroup) scene.remove(placementGroup);
+  placementGroup = buildFloorplanGroup(planData);
+
+  // Position-only placement (see top-of-file coordinate comment): the
+  // group keeps identity rotation so its local axes equal world axes,
+  // which keeps the pose inverse below a pure translation/scale.
+  placementGroup.position.copy(pos);
+  placementGroup.quaternion.identity();
+
+  let fittedTo = null;
+  if (autoFit) {
+    const fitted = denomToFitSurface();
+    if (fitted !== null) {
+      modelDenom = fitted;
+      fittedTo = surfaceExtentAtReticle;
+    }
+  }
+  applyModelScale();
+  applyModelRotation();
+  syncScaleUi();
+  scene.add(placementGroup);
+
+  reticle.visible = false;
+  placed = true;
+  placedStatus.textContent = `Placed at 1:${Math.round(modelDenom)}` +
+    (fittedTo ? ` (fitted to a ${(fittedTo * 100).toFixed(0)} cm surface)` : "");
+  placeHint.textContent = fittedTo
+    ? "Placed on the surface. Adjust size here or from the laptop panel."
+    : "Placed. No surface size detected - set the scale here or from the laptop.";
+  sendState();
+}
+
+function resetPlacementState() {
+  placed = false;
+  pendingPlace = false;
+  placementAnchor = null;
+  anchorStats.updates = 0;
+  anchorStats.untracked = 0;
+  anchorStats.driftM = 0;
+  anchorStats.jitterM = 0;
+  anchorStats.snaps = 0;
+  anchorStats.origin = null;
+  lastAnchorFrameAt = 0;
+  camStats.origin = null;
+  camStats.travelM = 0;
+  camStats.maxM = 0;
+  if (placementGroup) {
+    scene.remove(placementGroup);
+    placementGroup = null;
+  }
+  if (reticle) reticle.visible = false;
+  placedStatus.textContent = "Not placed";
+  sendState();
+  if (xrSession) {
+    placeHint.textContent = "Point at a detected floor, then tap to place the floorplan.";
+  }
+}
+
+function onXrFrame(timestamp, frame) {
+  if (!frame) {
+    renderer.render(scene, camera);
+    return;
+  }
+
+  const refSpace = renderer.xr.getReferenceSpace();
+
+  if (hitTestSource && !placed) {
+    const results = frame.getHitTestResults(hitTestSource);
+    if (results.length > 0) {
+      const hit = results[0];
+      const pose = hit.getPose(refSpace);
+      reticle.visible = true;
+      reticle.matrix.fromArray(pose.transform.matrix);
+      if (reticleEstimated) {
+        reticleEstimated = false;
+        reticle.material.color.setHex(RETICLE_TRACKED);
+      }
+
+      // Measure the surface under the reticle HERE, where `frame` is still
+      // valid, and keep only the resulting number for the tap handler.
+      if (timestamp - lastSurfaceProbeAt > SURFACE_PROBE_MS) {
+        lastSurfaceProbeAt = timestamp;
+        _reticlePos.setFromMatrixPosition(reticle.matrix);
+        try {
+          surfaceExtentAtReticle = surfaceExtentAt(_reticlePos, frame, refSpace);
+        } catch (err) {
+          surfaceExtentAtReticle = null;   // plane-detection not granted
+        }
+      }
+
+      if (pendingPlace) {
+        pendingPlace = false;
+        try {
+          placeFloorplanAtReticle();
+          tapDebug("placed ok");
+        } catch (err) {
+          appendError("Placement failed: " + ((err && err.stack) || err));
+          tapDebug("threw: " + (err && err.message));
+        }
+        // Anchor to the hit result while it is still live. Async, and the
+        // model is already visible - the anchor just takes over drift
+        // correction once it resolves.
+        if (placed && typeof hit.createAnchor === "function") {
+          hit.createAnchor().then(
+            (anchor) => { placementAnchor = anchor; },
+            () => { placementAnchor = null; }   // refused: fall back to static
+          );
+        }
+      }
+    } else {
+      // Nothing tracked here - fall back to a geometric guess so the user is
+      // never stuck waiting for ARCore to find features.
+      estimateReticle();
+      surfaceExtentAtReticle = null;
+      if (pendingPlace) {
+        pendingPlace = false;
+        try {
+          placeFloorplanAtReticle();
+          tapDebug("placed (estimated surface)");
+        } catch (err) {
+          appendError("Placement failed: " + ((err && err.stack) || err));
+        }
+        // There is no hit result to anchor to here, but a free-floating
+        // anchor can still be created from a bare pose - so an estimated
+        // placement gets the same drift correction as a tracked one.
+        if (placed && typeof frame.createAnchor === "function") {
+          try {
+            _estPos.setFromMatrixPosition(reticle.matrix);
+            frame.createAnchor(
+              new XRRigidTransform({ x: _estPos.x, y: _estPos.y, z: _estPos.z }),
+              refSpace
+            ).then(
+              (anchor) => { placementAnchor = anchor; },
+              () => { placementAnchor = null; }
+            );
+          } catch (e) {
+            placementAnchor = null;   // anchors not granted; static placement
+          }
+        }
+      }
+    }
+  }
+
+  // Follow the anchor. ARCore re-localises continuously, so the anchor's pose
+  // in the reference space changes over time - re-reading it every frame is
+  // what keeps the model on the real table instead of sliding with the
+  // camera. Position only: the placement contract requires identity rotation
+  // on the group so the pose inverse stays a pure translation/scale.
+  if (placed && placementGroup && placementAnchor) {
+    const tracked = frame.trackedAnchors;
+    if (tracked && !tracked.has(placementAnchor)) {
+      anchorStats.untracked++;
+    } else {
+      const anchorPose = frame.getPose(placementAnchor.anchorSpace, refSpace);
+      if (anchorPose) {
+        const t = anchorPose.transform.position;
+        _anchorPos.set(t.x, t.y, t.z);
+
+        if (anchorStats.origin === null) {
+          // First pose: adopt it outright. Easing in from the tap position
+          // would make the model drift into place on arrival.
+          anchorStats.origin = _anchorPos.clone();
+          _prevAnchorPos.copy(_anchorPos);
+          placementGroup.position.copy(_anchorPos);
+        } else {
+          // Jitter is measured on the RAW pose, deliberately: comparing
+          // against the smoothed position would measure our own damping.
+          const step = _anchorPos.distanceTo(_prevAnchorPos);
+          anchorStats.jitterM = anchorStats.jitterM * 0.9 + step * 0.1;
+          anchorStats.driftM = _anchorPos.distanceTo(anchorStats.origin);
+          _prevAnchorPos.copy(_anchorPos);
+
+          const gap = _anchorPos.distanceTo(placementGroup.position);
+          if (gap > SNAP_M) {
+            placementGroup.position.copy(_anchorPos);
+            anchorStats.snaps++;
+          } else {
+            const dt = lastAnchorFrameAt
+              ? Math.min(0.1, (timestamp - lastAnchorFrameAt) / 1000)
+              : 0;
+            const alpha = dt > 0 ? 1 - Math.exp(-dt / SMOOTH_TAU) : 1;
+            placementGroup.position.lerp(_anchorPos, alpha);
+          }
+        }
+        lastAnchorFrameAt = timestamp;
+        anchorStats.updates++;
+      }
+    }
+  }
+
+  if (placed && placementGroup) {
+    maybeSendPose(timestamp);
+
+    const xrCam = renderer.xr.getCamera();
+    xrCam.getWorldPosition(_camTrack);
+    if (camStats.origin === null) {
+      camStats.origin = _camTrack.clone();
+    } else {
+      camStats.travelM = _camTrack.distanceTo(camStats.origin);
+      if (camStats.travelM > camStats.maxM) camStats.maxM = camStats.travelM;
+    }
+  }
+
+  if (timestamp - lastTapDebugAt > 500) {
+    lastTapDebugAt = timestamp;
+    tapDebug();
+  }
+
+  renderer.render(scene, camera);
+}
+
+let reticleEstimated = false;
+const _reticlePos = new THREE.Vector3();
+const _estPos = new THREE.Vector3();
+const _estDir = new THREE.Vector3();
+const _estQuat = new THREE.Quaternion();
+const _anchorPos = new THREE.Vector3();
+const _prevAnchorPos = new THREE.Vector3();
+const _camTrack = new THREE.Vector3();
+const _camPos = new THREE.Vector3();
+const _camQuat = new THREE.Quaternion();
+const _forward = new THREE.Vector3();
+const _groupQuatInv = new THREE.Quaternion();
+
+function maybeSendPose(timestamp) {
+  if (timestamp - lastSendAt < SEND_INTERVAL_MS) return;
+  lastSendAt = timestamp;
+
+  // Use the XR viewer camera (synced to the device pose each frame),
+  // not the plain `camera` object's stale transform.
+  const xrCam = renderer.xr.getCamera();
+  xrCam.getWorldPosition(_camPos);
+  xrCam.getWorldQuaternion(_camQuat);
+
+  const local = placementGroup.worldToLocal(_camPos.clone());
+
+  _forward.set(0, 0, -1).applyQuaternion(_camQuat);
+  placementGroup.getWorldQuaternion(_groupQuatInv).invert();
+  _forward.applyQuaternion(_groupQuatInv);
+  _forward.y = 0;
+  if (_forward.lengthSq() < 1e-6) _forward.set(0, 0, 1);
+  _forward.normalize();
+
+  // See top-of-file comment: yaw_deg = atan2(localForward.x, localForward.z),
+  // matching ../unity/PoseStreamer.cs and index.html's heading convention.
+  const yawDeg = THREE.MathUtils.radToDeg(Math.atan2(_forward.x, _forward.z));
+  const { x, y } = localToPlan(local.x, local.z);
+
+  sendPose(x, y, yawDeg);
+}
+
+// ---------------------------------------------------------------------
+// Dimensions panel. Two controls for the two independent scale factors:
+// the real building size (sets ppm, so it rebuilds geometry) and the
+// miniature factor (a group scale, so it does not).
+// ---------------------------------------------------------------------
+function syncScaleUi() {
+  const denom = Math.round(modelDenom);
+  denomSlider.value = String(THREE.MathUtils.clamp(denom, DENOM_MIN, DENOM_MAX));
+  denomOut.textContent = String(denom);
+  if (document.activeElement !== yawSlider) yawSlider.value = String(Math.round(modelYawDeg));
+  yawOut.textContent = String(Math.round(modelYawDeg));
+  autoFitChk.checked = autoFit;
+
+  const { w, d } = realFootprintM();
+  const longest = Math.max(w, d);
+  if (document.activeElement !== realSizeInput) {
+    realSizeInput.value = longest > 0 ? longest.toFixed(1) : "";
+  }
+
+  const cm = (m) => (m / modelDenom) * 100;
+  scaleReadout.textContent =
+    `real  ${w.toFixed(1)} x ${d.toFixed(1)} m, walls ${wallHeightM.toFixed(1)} m
+` +
+    `model ${cm(w).toFixed(1)} x ${cm(d).toFixed(1)} cm, walls ${cm(wallHeightM).toFixed(1)} cm`;
+}
+
+// Hide the overlay to see the AR view unobstructed. With dom-overlay active
+// this also stops the panels from swallowing touches, so tap-to-place still
+// works while the UI is hidden.
+uiToggle.addEventListener("click", () => {
+  const hidden = overlayRoot.classList.toggle("ui-hidden");
+  uiToggle.textContent = hidden ? "Show UI" : "Hide UI";
+  uiToggle.setAttribute("aria-pressed", String(hidden));
+});
+
+yawSlider.addEventListener("input", () => {
+  modelYawDeg = Number(yawSlider.value);
+  applyModelRotation();
+  syncScaleUi();
+  sendState();
+});
+
+denomSlider.addEventListener("input", () => {
+  modelDenom = Number(denomSlider.value);
+  // Dragging the slider is the user taking manual control; stop overriding
+  // their number on the next placement.
+  autoFit = false;
+  applyModelScale();
+  syncScaleUi();
+  sendState();
+});
+
+realSizeInput.addEventListener("change", () => {
+  const meters = Number(realSizeInput.value);
+  const longestPx = Math.max(planBoundsPx.widthPx, planBoundsPx.heightPx);
+  if (!isFinite(meters) || meters <= 0 || longestPx <= 0) {
+    syncScaleUi();
+    return;
+  }
+  ppm = longestPx / meters;
+  rebuildPlacedGeometry();
+  syncScaleUi();
+  sendState();
+});
+
+autoFitChk.addEventListener("change", () => {
+  autoFit = autoFitChk.checked;
+  sendState();
+});
+
+// ---------------------------------------------------------------------
+// Boot
+// ---------------------------------------------------------------------
+async function boot() {
+  try {
+    await loadFloorplan();
+  } catch (e) {
+    showError("Failed to load floorplan.json: " + e.message);
+  }
+
+  if (FAKE_MODE) {
+    startFakeMode();
+    return;
+  }
+
+  try {
+    initThree();
+  } catch (e) {
+    showError("Failed to initialize WebGL/three.js: " + e.message);
+    return;
+  }
+
+  scalePanel.style.display = "block";
+  syncScaleUi();
+
+  await checkXrSupport();
+  connectWs();
+}
+
+boot();
+</script>
+</body>
+</html>

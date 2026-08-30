@@ -1,0 +1,17 @@
+[?25l   [90m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[0m [32m0.0/154.8 kB[0m [31m?[0m eta [36m-:--:--[0m[2K   [91m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[0m[91m╸[0m [32m153.6/154.8 kB[0m [31m6.3 MB/s[0m eta [36m0:00:01[0m[2K   
+[?25htorch 2.10.0+cu128 | CUDA GPU: Tesla T4
+MitUNet_cubicasa-5k_a62_mit_b4_tversky_7666_30E.pth -> 257.4 MB (expect ~257)
+MitUNet loaded
+auto-crop: x[1019:1919] y[446:1699]
+prob map: (1253, 900) offset (np.int64(1019), np.int64(446))
+components: naive@0.5 = 8  ->  hysteresis = 8   (healing metric; ideal ~1)
+t_med = 22.0px  seal kernel = 33px  components after close = 7
+seal layer: 177442 CubiCasa wall px + 14 opening bars (labeling copy only)
+labels: 7  exterior: 1  rooms: 5
+room polygons (closed by construction): [4, 15, 16, 4, 4] vertices
+derived 116 wall runs from 14 adjacent label pairs
+Phase 2 stub
+Phase 2 stub
+Phase 2 stub
+Phase 2 stub
+Phase 3 stub

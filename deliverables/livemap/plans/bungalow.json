@@ -1,0 +1,308 @@
+{
+ "schema_version": "2.0",
+ "source": {
+  "image_width_px": 1200,
+  "image_height_px": 800,
+  "origin": "hand-authored bungalow (not model output)"
+ },
+ "scale": {
+  "units": "relative_px",
+  "user_scale_required": true
+ },
+ "walls": [
+  {
+   "start": {
+    "x": 0.0,
+    "y": 0.0
+   },
+   "end": {
+    "x": 1200.0,
+    "y": 0.0
+   },
+   "thickness": 20.0,
+   "exterior": true,
+   "id": "w0"
+  },
+  {
+   "start": {
+    "x": 0.0,
+    "y": 800.0
+   },
+   "end": {
+    "x": 555.0,
+    "y": 800.0
+   },
+   "thickness": 20.0,
+   "exterior": true,
+   "id": "w1"
+  },
+  {
+   "start": {
+    "x": 645.0,
+    "y": 800.0
+   },
+   "end": {
+    "x": 1200.0,
+    "y": 800.0
+   },
+   "thickness": 20.0,
+   "exterior": true,
+   "id": "w2"
+  },
+  {
+   "start": {
+    "x": 0.0,
+    "y": 0.0
+   },
+   "end": {
+    "x": 0.0,
+    "y": 800.0
+   },
+   "thickness": 20.0,
+   "exterior": true,
+   "id": "w3"
+  },
+  {
+   "start": {
+    "x": 1200.0,
+    "y": 0.0
+   },
+   "end": {
+    "x": 1200.0,
+    "y": 800.0
+   },
+   "thickness": 20.0,
+   "exterior": true,
+   "id": "w4"
+  },
+  {
+   "start": {
+    "x": 700.0,
+    "y": 0.0
+   },
+   "end": {
+    "x": 700.0,
+    "y": 155.0
+   },
+   "thickness": 20.0,
+   "exterior": false,
+   "id": "w5"
+  },
+  {
+   "start": {
+    "x": 700.0,
+    "y": 245.0
+   },
+   "end": {
+    "x": 700.0,
+    "y": 555.0
+   },
+   "thickness": 20.0,
+   "exterior": false,
+   "id": "w6"
+  },
+  {
+   "start": {
+    "x": 700.0,
+    "y": 645.0
+   },
+   "end": {
+    "x": 700.0,
+    "y": 800.0
+   },
+   "thickness": 20.0,
+   "exterior": false,
+   "id": "w7"
+  },
+  {
+   "start": {
+    "x": 700.0,
+    "y": 400.0
+   },
+   "end": {
+    "x": 1200.0,
+    "y": 400.0
+   },
+   "thickness": 20.0,
+   "exterior": false,
+   "id": "w8"
+  },
+  {
+   "start": {
+    "x": 0.0,
+    "y": 500.0
+   },
+   "end": {
+    "x": 455.0,
+    "y": 500.0
+   },
+   "thickness": 20.0,
+   "exterior": false,
+   "id": "w9"
+  },
+  {
+   "start": {
+    "x": 545.0,
+    "y": 500.0
+   },
+   "end": {
+    "x": 700.0,
+    "y": 500.0
+   },
+   "thickness": 20.0,
+   "exterior": false,
+   "id": "w10"
+  },
+  {
+   "start": {
+    "x": 300.0,
+    "y": 500.0
+   },
+   "end": {
+    "x": 300.0,
+    "y": 605.0
+   },
+   "thickness": 20.0,
+   "exterior": false,
+   "id": "w11"
+  },
+  {
+   "start": {
+    "x": 300.0,
+    "y": 695.0
+   },
+   "end": {
+    "x": 300.0,
+    "y": 800.0
+   },
+   "thickness": 20.0,
+   "exterior": false,
+   "id": "w12"
+  }
+ ],
+ "rooms": [
+  {
+   "id": "living",
+   "type": "living_room",
+   "polygon": [
+    {
+     "x": 0.0,
+     "y": 0.0
+    },
+    {
+     "x": 700.0,
+     "y": 0.0
+    },
+    {
+     "x": 700.0,
+     "y": 500.0
+    },
+    {
+     "x": 0.0,
+     "y": 500.0
+    }
+   ],
+   "area_px": 350000.0
+  },
+  {
+   "id": "bedroom_1",
+   "type": "bedroom",
+   "polygon": [
+    {
+     "x": 700.0,
+     "y": 0.0
+    },
+    {
+     "x": 1200.0,
+     "y": 0.0
+    },
+    {
+     "x": 1200.0,
+     "y": 400.0
+    },
+    {
+     "x": 700.0,
+     "y": 400.0
+    }
+   ],
+   "area_px": 200000.0
+  },
+  {
+   "id": "bedroom_2",
+   "type": "bedroom",
+   "polygon": [
+    {
+     "x": 700.0,
+     "y": 400.0
+    },
+    {
+     "x": 1200.0,
+     "y": 400.0
+    },
+    {
+     "x": 1200.0,
+     "y": 800.0
+    },
+    {
+     "x": 700.0,
+     "y": 800.0
+    }
+   ],
+   "area_px": 200000.0
+  },
+  {
+   "id": "bathroom",
+   "type": "bathroom",
+   "polygon": [
+    {
+     "x": 0.0,
+     "y": 500.0
+    },
+    {
+     "x": 300.0,
+     "y": 500.0
+    },
+    {
+     "x": 300.0,
+     "y": 800.0
+    },
+    {
+     "x": 0.0,
+     "y": 800.0
+    }
+   ],
+   "area_px": 90000.0
+  },
+  {
+   "id": "kitchen",
+   "type": "kitchen",
+   "polygon": [
+    {
+     "x": 300.0,
+     "y": 500.0
+    },
+    {
+     "x": 700.0,
+     "y": 500.0
+    },
+    {
+     "x": 700.0,
+     "y": 800.0
+    },
+    {
+     "x": 300.0,
+     "y": 800.0
+    }
+   ],
+   "area_px": 120000.0
+  }
+ ],
+ "fixtures": [],
+ "acceptance": {
+  "accepted": true,
+  "reject_reasons": [],
+  "notes": [
+   "synthetic_reference_plan"
+  ]
+ }
+}

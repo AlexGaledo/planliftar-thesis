@@ -1,0 +1,772 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Live Floorplan Map</title>
+<style>
+  :root {
+    --bg: #0b0e14;
+    --panel: rgba(18, 22, 32, 0.85);
+    --panel-border: rgba(255, 255, 255, 0.08);
+    --text: #e6e9f0;
+    --muted: #7b8496;
+    --wall: rgba(210, 218, 235, 0.9);
+    --room-fill: rgba(90, 140, 230, 0.07);
+    --room-stroke: rgba(120, 160, 240, 0.18);
+    --player: #39f0c0;
+    --player-glow: rgba(57, 240, 192, 0.35);
+    --trail: rgba(57, 240, 192, 0.45);
+    --ok: #39f0c0;
+    --bad: #ff5f6d;
+    --warn: #ffb020;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    padding: 0;
+    width: 100%;
+    height: 100%;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    overflow: hidden;
+  }
+  #stage {
+    position: fixed;
+    inset: 0;
+  }
+  canvas {
+    display: block;
+    width: 100%;
+    height: 100%;
+  }
+  .rightStack {
+    position: fixed;
+    top: 14px;
+    right: 14px;
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+    width: 240px;
+  }
+  .hud {
+    background: var(--panel);
+    border: 1px solid var(--panel-border);
+    border-radius: 10px;
+    padding: 10px 14px;
+    font-size: 13px;
+    backdrop-filter: blur(6px);
+    min-width: 190px;
+    box-shadow: 0 4px 18px rgba(0, 0, 0, 0.35);
+  }
+  .hud-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    line-height: 1.5;
+  }
+  .hud-row + .hud-row {
+    margin-top: 4px;
+  }
+  .dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex: none;
+    background: var(--bad);
+    box-shadow: 0 0 6px currentColor;
+  }
+  .dot.ok { background: var(--ok); color: var(--ok); }
+  .dot.warn { background: var(--warn); color: var(--warn); }
+  .dot.bad { background: var(--bad); color: var(--bad); }
+  .muted { color: var(--muted); }
+  .title {
+    position: fixed;
+    top: 14px;
+    left: 14px;
+    background: var(--panel);
+    border: 1px solid var(--panel-border);
+    border-radius: 10px;
+    padding: 10px 14px;
+    font-size: 13px;
+    backdrop-filter: blur(6px);
+    box-shadow: 0 4px 18px rgba(0, 0, 0, 0.35);
+  }
+  .title b {
+    font-weight: 600;
+    letter-spacing: 0.02em;
+  }
+  .err {
+    position: fixed;
+    bottom: 14px;
+    left: 14px;
+    right: 14px;
+    background: rgba(255, 95, 109, 0.12);
+    border: 1px solid rgba(255, 95, 109, 0.35);
+    color: #ffb3ba;
+    border-radius: 10px;
+    padding: 10px 14px;
+    font-size: 13px;
+    display: none;
+  }
+
+  /* Control panel: laptop -> phone live AR params, per PROTOCOL.md. */
+  .ctrl-empty {
+    font-size: 12px;
+    color: var(--muted);
+    line-height: 1.5;
+  }
+  .ctrl-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-top: 8px;
+  }
+  .ctrl-row:first-child { margin-top: 0; }
+  .ctrl-row label {
+    font-size: 12px;
+    color: var(--text);
+    flex: none;
+  }
+  .ctrl-row input[type="number"] {
+    width: 68px;
+    background: #0d1119;
+    border: 1px solid var(--panel-border);
+    color: var(--text);
+    border-radius: 6px;
+    padding: 4px 6px;
+    font-size: 12px;
+  }
+  .ctrl-row input[type="range"] {
+    flex: 1;
+    margin: 0 8px;
+    accent-color: var(--player);
+  }
+  .ctrl-row input[type="checkbox"] {
+    width: 16px;
+    height: 16px;
+    accent-color: var(--player);
+  }
+  .ctrl-row input:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+  .ctrl-readout {
+    font-size: 12px;
+    color: var(--muted);
+    line-height: 1.6;
+    margin-top: 10px;
+  }
+  .ctrl-readout b { color: var(--text); font-weight: 600; }
+  .ctrl-btn {
+    margin-top: 10px;
+    width: 100%;
+    padding: 8px;
+    border-radius: 8px;
+    border: 1px solid var(--panel-border);
+    background: rgba(255, 255, 255, 0.04);
+    color: var(--text);
+    font-size: 12px;
+    cursor: pointer;
+  }
+  .ctrl-btn:hover:not(:disabled) { background: rgba(255, 255, 255, 0.08); }
+  .ctrl-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+</style>
+</head>
+<body>
+  <div id="stage">
+    <canvas id="canvas"></canvas>
+  </div>
+
+  <div class="title">
+    <b>Spectator Live Map</b>
+    <div class="muted" id="planInfo">loading floorplan&hellip;</div>
+  </div>
+
+  <div class="rightStack">
+    <div class="hud">
+      <div class="hud-row">
+        <span class="dot bad" id="wsDot"></span>
+        <span id="wsStatus">Connecting&hellip;</span>
+      </div>
+      <div class="hud-row">
+        <span class="muted">Last update:</span>
+        <span id="lastUpdate">&mdash;</span>
+      </div>
+    </div>
+
+    <div class="hud" id="ctrlPanel">
+      <div class="ctrl-empty" id="ctrlEmpty">No phone has reported state yet &mdash; controls appear once one connects.</div>
+      <div id="ctrlBody" style="display:none;">
+        <div class="ctrl-row">
+          <label for="ctlRealLongest">Real longest side (m)</label>
+          <input type="number" id="ctlRealLongest" min="0.5" max="500" step="0.1" disabled>
+        </div>
+        <div class="ctrl-row">
+          <label for="ctlModelDenom">Scale 1:<span id="ctlModelDenomVal">&mdash;</span></label>
+          <input type="range" id="ctlModelDenom" min="5" max="200" step="1" disabled>
+        </div>
+        <div class="ctrl-row">
+          <label for="ctlAutoFit">Auto-fit on placement</label>
+          <input type="checkbox" id="ctlAutoFit" disabled>
+        </div>
+        <div class="ctrl-row">
+          <label for="ctlWallHeight">Wall height (m)</label>
+          <input type="number" id="ctlWallHeight" min="0.1" max="10" step="0.1" disabled>
+        </div>
+        <div class="ctrl-row">
+          <label for="ctlWallOpacity">Wall opacity (<span id="ctlWallOpacityVal">&mdash;</span>)</label>
+          <input type="range" id="ctlWallOpacity" min="0.05" max="1" step="0.01" disabled>
+        </div>
+        <div class="ctrl-row">
+          <label for="ctlRotation">Rotation (<span id="ctlRotationVal">&mdash;</span>&deg;)</label>
+          <input type="range" id="ctlRotation" min="0" max="359" step="1" disabled>
+        </div>
+        <div class="ctrl-readout" id="ctrlReadout"></div>
+        <button class="ctrl-btn" id="ctlReset" type="button" disabled>Reset placement</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="err" id="errBox"></div>
+
+<script>
+(function () {
+  "use strict";
+
+  const canvas = document.getElementById("canvas");
+  const ctx = canvas.getContext("2d");
+  const wsDot = document.getElementById("wsDot");
+  const wsStatus = document.getElementById("wsStatus");
+  const lastUpdateEl = document.getElementById("lastUpdate");
+  const planInfoEl = document.getElementById("planInfo");
+  const errBox = document.getElementById("errBox");
+
+  function showError(msg) {
+    errBox.textContent = msg;
+    errBox.style.display = "block";
+  }
+
+  // ---------------------------------------------------------------------
+  // Control panel: live-adjusts the phone's AR view via {"type":"control"}
+  // patches, and renders itself from the phone's {"type":"state"} messages
+  // per PROTOCOL.md - never from what it last sent, since the phone is
+  // authoritative (it clamps and may auto-fit on its own).
+  // ---------------------------------------------------------------------
+  const ctrlEmpty = document.getElementById("ctrlEmpty");
+  const ctrlBody = document.getElementById("ctrlBody");
+  const ctrlReadout = document.getElementById("ctrlReadout");
+  const elModelDenomVal = document.getElementById("ctlModelDenomVal");
+  const elWallOpacityVal = document.getElementById("ctlWallOpacityVal");
+  const elRotationVal = document.getElementById("ctlRotationVal");
+  const elReset = document.getElementById("ctlReset");
+
+  const CONTROLS = [
+    { id: "ctlRealLongest", key: "real_longest_m", kind: "number" },
+    { id: "ctlModelDenom", key: "model_denom", kind: "range" },
+    { id: "ctlAutoFit", key: "auto_fit", kind: "checkbox" },
+    { id: "ctlWallHeight", key: "wall_height_m", kind: "number" },
+    { id: "ctlWallOpacity", key: "wall_opacity", kind: "range" },
+    { id: "ctlRotation", key: "rotation_deg", kind: "range" },
+  ].map((c) => Object.assign(c, { el: document.getElementById(c.id) }));
+
+  let havePhoneState = false;
+  let lastState = null;
+  const interacting = new Set();   // control ids the user is actively using
+  const pendingPatch = {};         // state key -> queued value, drained ~10Hz
+  const lastSentValue = {};        // state key -> last value sent or applied
+
+  function readEl(c) {
+    return c.kind === "checkbox" ? c.el.checked : parseFloat(c.el.value);
+  }
+  function writeEl(c, value) {
+    if (c.kind === "checkbox") c.el.checked = !!value;
+    else c.el.value = value;
+  }
+  function updateRangeLabel(c) {
+    if (c.id === "ctlModelDenom") {
+      elModelDenomVal.textContent = Math.round(parseFloat(c.el.value));
+    } else if (c.id === "ctlWallOpacity") {
+      elWallOpacityVal.textContent = parseFloat(c.el.value).toFixed(2);
+    } else if (c.id === "ctlRotation") {
+      elRotationVal.textContent = Math.round(parseFloat(c.el.value));
+    }
+  }
+
+  function sendPatch(patch) {
+    if (!currentSocket || currentSocket.readyState !== WebSocket.OPEN) return;
+    currentSocket.send(JSON.stringify({ type: "control", patch }));
+  }
+
+  // Slider drags (and number-input edits) queue their value here instead of
+  // sending on every "input" event; a 100ms ticker below drains it, which
+  // caps the hub-facing rate at ~10 msg/s during a drag. "change" (fires on
+  // release/blur/enter) flushes immediately so the final value is never
+  // stuck waiting on the ticker.
+  function queuePatch(c) {
+    pendingPatch[c.key] = readEl(c);
+  }
+  function flushPatch(c) {
+    if (!(c.key in pendingPatch)) return;
+    const val = pendingPatch[c.key];
+    delete pendingPatch[c.key];
+    if (lastSentValue[c.key] === val) return;
+    sendPatch({ [c.key]: val });
+    lastSentValue[c.key] = val;
+  }
+  setInterval(() => {
+    for (const key of Object.keys(pendingPatch)) {
+      const val = pendingPatch[key];
+      delete pendingPatch[key];
+      if (lastSentValue[key] === val) continue;
+      sendPatch({ [key]: val });
+      lastSentValue[key] = val;
+    }
+  }, 100);
+
+  CONTROLS.forEach((c) => {
+    c.el.addEventListener("focus", () => interacting.add(c.id));
+    c.el.addEventListener("blur", () => {
+      interacting.delete(c.id);
+      // Apply whatever the phone reported while this control had focus -
+      // it was deliberately withheld so the drag/typing wasn't yanked.
+      if (lastState) applyControlFromState(c, lastState);
+    });
+    c.el.addEventListener("input", () => {
+      if (c.kind === "range") updateRangeLabel(c);
+      queuePatch(c);
+    });
+    c.el.addEventListener("change", () => flushPatch(c));
+  });
+
+  elReset.addEventListener("click", () => {
+    sendPatch({ reset_placement: true });
+  });
+
+  function applyControlFromState(c, state) {
+    if (interacting.has(c.id)) return; // don't yank a control the user is using
+    const val = state[c.key];
+    if (val === undefined) return;
+    writeEl(c, val);
+    if (c.kind === "range") updateRangeLabel(c);
+    // Seed so the ticker doesn't immediately echo the phone's own value
+    // back at it as though the user had just changed it.
+    lastSentValue[c.key] = val;
+  }
+
+  function renderReadout(state) {
+    const wCm = (state.plan_w_m * 100) / state.model_denom;
+    const dCm = (state.plan_d_m * 100) / state.model_denom;
+    const dims = (isFinite(wCm) && isFinite(dCm))
+      ? `${wCm.toFixed(1)} &times; ${dCm.toFixed(1)} cm`
+      : "&mdash;";
+    ctrlReadout.innerHTML =
+      `Model size: <b>${dims}</b><br>` +
+      `Placed: <b>${state.placed ? "yes" : "no"}</b> &middot; XR: <b>${state.xr || "unknown"}</b>`;
+  }
+
+  function applyStateToUI(state) {
+    lastState = state;
+    if (!havePhoneState) {
+      havePhoneState = true;
+      ctrlEmpty.style.display = "none";
+      ctrlBody.style.display = "block";
+      CONTROLS.forEach((c) => (c.el.disabled = false));
+      elReset.disabled = false;
+    }
+    CONTROLS.forEach((c) => applyControlFromState(c, state));
+    renderReadout(state);
+  }
+
+  function onControlMessage(msg) {
+    // Per PROTOCOL.md: an unrecognised "type" is ignored silently. "state"
+    // is the only control-plane message type a viewer ever receives.
+    if (msg.type === "state" && msg.state && typeof msg.state === "object") {
+      applyStateToUI(msg.state);
+    }
+  }
+
+  // ---------------------------------------------------------------------
+  // Canvas sizing
+  // ---------------------------------------------------------------------
+  let dpr = Math.max(1, window.devicePixelRatio || 1);
+
+  function resizeCanvas() {
+    dpr = Math.max(1, window.devicePixelRatio || 1);
+    const w = window.innerWidth;
+    const h = window.innerHeight;
+    canvas.width = Math.round(w * dpr);
+    canvas.height = Math.round(h * dpr);
+    canvas.style.width = w + "px";
+    canvas.style.height = h + "px";
+    computeTransform();
+    // Re-render the cached offscreen floorplan too - it's sized/scaled to
+    // the canvas, so without this it goes stale (wrong size, misaligned
+    // with the live dot) on every resize after the first.
+    renderStatic();
+    draw();
+  }
+  window.addEventListener("resize", resizeCanvas);
+
+  // ---------------------------------------------------------------------
+  // Floorplan data + fit-to-canvas transform.
+  //
+  // Plan coordinates are image-space pixels: X right, Y DOWN (same
+  // convention FloorPlanMeshBuilder.cs uses on the Unity side). Canvas 2D
+  // space is ALSO X right, Y down, so mapping plan -> canvas is a plain
+  // uniform scale + offset with NO axis flip needed. Flipping Y here would
+  // mirror the plan - see FloorPlanMeshBuilder.cs's header for why Unity's
+  // own worldZ = -y flip exists only for its right-handed-looking-but-
+  // actually-left-handed 3D ground plane, which does not apply to a 2D
+  // top-down canvas.
+  // ---------------------------------------------------------------------
+  let plan = null;
+  let xform = { scale: 1, offsetX: 0, offsetY: 0 };
+  const MARGIN_FRACTION = 0.08;
+
+  function allPlanPoints(data) {
+    const pts = [];
+    (data.walls || []).forEach((w) => {
+      if (w.start) pts.push(w.start);
+      if (w.end) pts.push(w.end);
+    });
+    (data.rooms || []).forEach((r) => {
+      (r.polygon || []).forEach((p) => pts.push(p));
+    });
+    return pts;
+  }
+
+  function computeTransform() {
+    if (!plan) return;
+    const pts = allPlanPoints(plan);
+    if (pts.length === 0) {
+      xform = { scale: 1, offsetX: 0, offsetY: 0 };
+      return;
+    }
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const p of pts) {
+      if (p.x < minX) minX = p.x;
+      if (p.x > maxX) maxX = p.x;
+      if (p.y < minY) minY = p.y;
+      if (p.y > maxY) maxY = p.y;
+    }
+    const planW = Math.max(1, maxX - minX);
+    const planH = Math.max(1, maxY - minY);
+
+    const cw = canvas.width;
+    const ch = canvas.height;
+    const usableW = cw * (1 - MARGIN_FRACTION * 2);
+    const usableH = ch * (1 - MARGIN_FRACTION * 2);
+
+    const scale = Math.min(usableW / planW, usableH / planH);
+    const drawnW = planW * scale;
+    const drawnH = planH * scale;
+
+    // Center the plan's bounding box within the canvas.
+    const offsetX = (cw - drawnW) / 2 - minX * scale;
+    const offsetY = (ch - drawnH) / 2 - minY * scale;
+
+    xform = { scale, offsetX, offsetY };
+  }
+
+  function toCanvas(px, py) {
+    return [px * xform.scale + xform.offsetX, py * xform.scale + xform.offsetY];
+  }
+
+  // ---------------------------------------------------------------------
+  // Static floorplan render, cached to an offscreen canvas so per-frame
+  // work is limited to the player marker + trail.
+  // ---------------------------------------------------------------------
+  let staticCanvas = null;
+
+  function renderStatic() {
+    staticCanvas = document.createElement("canvas");
+    staticCanvas.width = canvas.width;
+    staticCanvas.height = canvas.height;
+    const sctx = staticCanvas.getContext("2d");
+
+    if (!plan) return;
+
+    // Rooms: subtle fill + faint stroke.
+    (plan.rooms || []).forEach((room) => {
+      const poly = room.polygon || [];
+      if (poly.length < 3) return;
+      sctx.beginPath();
+      const [x0, y0] = toCanvas(poly[0].x, poly[0].y);
+      sctx.moveTo(x0, y0);
+      for (let i = 1; i < poly.length; i++) {
+        const [x, y] = toCanvas(poly[i].x, poly[i].y);
+        sctx.lineTo(x, y);
+      }
+      sctx.closePath();
+      sctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue("--room-fill").trim();
+      sctx.fill();
+      sctx.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue("--room-stroke").trim();
+      sctx.lineWidth = 1;
+      sctx.stroke();
+    });
+
+    // Walls: thick line segments using each wall's own thickness (px, in
+    // plan space) scaled by the same fit transform, so relative wall
+    // thickness is preserved.
+    const wallColor = getComputedStyle(document.documentElement).getPropertyValue("--wall").trim();
+    (plan.walls || []).forEach((w) => {
+      if (!w.start || !w.end) return;
+      const [x1, y1] = toCanvas(w.start.x, w.start.y);
+      const [x2, y2] = toCanvas(w.end.x, w.end.y);
+      const thicknessPx = (w.thickness || 4) * xform.scale;
+      sctx.beginPath();
+      sctx.moveTo(x1, y1);
+      sctx.lineTo(x2, y2);
+      sctx.strokeStyle = wallColor;
+      sctx.lineWidth = Math.max(1.5, thicknessPx);
+      sctx.lineCap = "round";
+      sctx.stroke();
+    });
+  }
+
+  // Which plan to load. Defaults to the hand-authored bungalow: the CubiCasa
+  // sample is a real model output whose segmentation is poor (one merged region
+  // over half the building, 244 wall runs), which makes AR problems impossible
+  // to tell apart from geometry problems. Pass ?plan=cubicasa for that one.
+  function planUrl() {
+    const name = new URLSearchParams(location.search).get("plan") || "bungalow";
+    // Only a bare name is accepted - no slashes, so the query string cannot be
+    // used to point the fetch somewhere else.
+    const safe = /^[a-z0-9_-]+$/i.test(name) ? name : "bungalow";
+    return `plans/${safe}.json`;
+  }
+
+  function loadFloorplan() {
+    fetch(planUrl(), { cache: "no-store" })
+      .then((r) => {
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        return r.json();
+      })
+      .then((data) => {
+        plan = data;
+        const wallCount = (plan.walls || []).length;
+        const roomCount = (plan.rooms || []).length;
+        planInfoEl.textContent = `${wallCount} walls, ${roomCount} rooms`;
+        computeTransform();
+        renderStatic();
+        draw();
+      })
+      .catch((err) => {
+        showError("Failed to load floorplan.json: " + err.message);
+        planInfoEl.textContent = "floorplan load failed";
+      });
+  }
+
+  // ---------------------------------------------------------------------
+  // Live player state (pose messages: {x, y, yaw_deg} in plan px space).
+  //
+  // Heading convention: yaw_deg = 0 points toward plan -Y ("up" the
+  // image / canvas), increasing yaw rotates clockwise (toward +X), i.e.
+  // the same left-handed Y-axis convention Unity's Euler yaw uses. See
+  // draw() below for the dirX/dirY derivation, and PoseStreamer.cs for
+  // the derivation that keeps this consistent with FloorPlanMeshBuilder's
+  // worldZ = -y mapping.
+  // ---------------------------------------------------------------------
+  const TRAIL_MAX = 200;
+  let trail = []; // array of {x, y} in plan space
+  let latest = null; // {x, y, yaw_deg}
+  let lastMessageAt = 0;
+
+  function onPose(msg) {
+    if (typeof msg.x !== "number" || typeof msg.y !== "number") return;
+    latest = msg;
+    lastMessageAt = performance.now();
+    trail.push({ x: msg.x, y: msg.y });
+    if (trail.length > TRAIL_MAX) trail.shift();
+    draw();
+  }
+
+  function draw() {
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    if (staticCanvas) {
+      ctx.drawImage(staticCanvas, 0, 0);
+    }
+
+    // Trail: fading dots from oldest to newest.
+    if (trail.length > 1) {
+      for (let i = 0; i < trail.length; i++) {
+        const alpha = (i + 1) / trail.length;
+        const [x, y] = toCanvas(trail[i].x, trail[i].y);
+        ctx.beginPath();
+        ctx.arc(x, y, 2.5 * dpr, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(57, 240, 192, ${0.35 * alpha})`;
+        ctx.fill();
+      }
+    }
+
+    // Player marker + heading cone.
+    if (latest) {
+      const [x, y] = toCanvas(latest.x, latest.y);
+      const yawRad = ((latest.yaw_deg || 0) * Math.PI) / 180;
+      // dx = sin(yaw), dy = -cos(yaw): yaw=0 -> "up" on screen (plan -Y),
+      // yaw=90 -> "right" on screen (plan +X). See header comment.
+      const dirX = Math.sin(yawRad);
+      const dirY = -Math.cos(yawRad);
+
+      const coneLen = 22 * dpr;
+      const coneHalfWidth = 9 * dpr;
+      const perpX = -dirY;
+      const perpY = dirX;
+
+      const tipX = x + dirX * coneLen;
+      const tipY = y + dirY * coneLen;
+      const baseLX = x + perpX * coneHalfWidth;
+      const baseLY = y + perpY * coneHalfWidth;
+      const baseRX = x - perpX * coneHalfWidth;
+      const baseRY = y - perpY * coneHalfWidth;
+
+      ctx.beginPath();
+      ctx.moveTo(tipX, tipY);
+      ctx.lineTo(baseLX, baseLY);
+      ctx.lineTo(baseRX, baseRY);
+      ctx.closePath();
+      ctx.fillStyle = "rgba(57, 240, 192, 0.55)";
+      ctx.fill();
+
+      // Glow + dot.
+      ctx.beginPath();
+      ctx.arc(x, y, 13 * dpr, 0, Math.PI * 2);
+      ctx.fillStyle = "rgba(57, 240, 192, 0.18)";
+      ctx.fill();
+
+      ctx.beginPath();
+      ctx.arc(x, y, 6 * dpr, 0, Math.PI * 2);
+      ctx.fillStyle = "#39f0c0";
+      ctx.strokeStyle = "#0b0e14";
+      ctx.lineWidth = 2 * dpr;
+      ctx.fill();
+      ctx.stroke();
+
+      // Pulsing locator ring so the phone position is unmissable at a glance.
+      const pulse = (performance.now() % 1500) / 1500;          // 0..1
+      ctx.beginPath();
+      ctx.arc(x, y, (14 + pulse * 22) * dpr, 0, Math.PI * 2);
+      ctx.strokeStyle = `rgba(57, 240, 192, ${0.55 * (1 - pulse)})`;
+      ctx.lineWidth = 2.5 * dpr;
+      ctx.stroke();
+
+      // "PHONE" tag + live plan coordinates next to the marker.
+      const labelX = x + 18 * dpr;
+      const labelY = y - 14 * dpr;
+      ctx.font = `${11 * dpr}px system-ui, sans-serif`;
+      const tag = "PHONE";
+      const coords = `${Math.round(latest.x)}, ${Math.round(latest.y)} px`;
+      const wTag = Math.max(ctx.measureText(tag).width, ctx.measureText(coords).width);
+      ctx.fillStyle = "rgba(11, 14, 20, 0.75)";
+      ctx.fillRect(labelX - 4 * dpr, labelY - 12 * dpr, wTag + 8 * dpr, 28 * dpr);
+      ctx.fillStyle = "#39f0c0";
+      ctx.fillText(tag, labelX, labelY);
+      ctx.fillStyle = "rgba(230, 237, 243, 0.75)";
+      ctx.fillText(coords, labelX, labelY + 13 * dpr);
+    }
+  }
+
+  // ---------------------------------------------------------------------
+  // HUD: connection status + last-update age, refreshed on a timer so the
+  // "Xs ago" text keeps ticking even with no new messages.
+  // ---------------------------------------------------------------------
+  function setStatus(state, text) {
+    wsDot.className = "dot " + state;
+    wsStatus.textContent = text;
+  }
+
+  function tickHud() {
+    if (lastMessageAt === 0) {
+      lastUpdateEl.textContent = "no data yet";
+    } else {
+      const ageSec = (performance.now() - lastMessageAt) / 1000;
+      lastUpdateEl.textContent = ageSec < 1 ? "just now" : ageSec.toFixed(1) + "s ago";
+    }
+  }
+  setInterval(tickHud, 200);
+
+  // ---------------------------------------------------------------------
+  // WebSocket viewer connection, with automatic reconnect + backoff.
+  // ---------------------------------------------------------------------
+  let reconnectDelay = 1000;
+  const RECONNECT_MAX = 10000;
+  let currentSocket = null;
+
+  function wsUrl() {
+    // The hub runs on the port neighboring the HTTP server (8765 next to
+    // 8080), on the same host this page was served from.
+    // Scheme follows the page's own: an https page is not allowed to open a
+    // plain ws:// socket (mixed content), so serve-with-TLS implies wss://.
+    const scheme = window.location.protocol === "https:" ? "wss" : "ws";
+    return `${scheme}://${window.location.hostname}:8765`;
+  }
+
+  function connect() {
+    setStatus("warn", "Connecting…");
+    let socket;
+    try {
+      socket = new WebSocket(wsUrl());
+    } catch (e) {
+      scheduleReconnect();
+      return;
+    }
+
+    socket.onopen = () => {
+      reconnectDelay = 1000;
+      setStatus("ok", "Connected");
+      currentSocket = socket;
+      socket.send(JSON.stringify({ role: "viewer" }));
+      // "Anyone there, tell me your state" - so a panel opened after the
+      // phone already connected still syncs instead of showing nothing.
+      socket.send(JSON.stringify({ type: "hello" }));
+    };
+
+    socket.onmessage = (event) => {
+      let msg;
+      try {
+        msg = JSON.parse(event.data);
+      } catch (e) {
+        return;
+      }
+      // Per PROTOCOL.md: no "type" field means pose; anything with a
+      // "type" is control-plane and must never reach onPose (it would
+      // corrupt the dot's position with garbage).
+      if (msg && typeof msg === "object" && "type" in msg) {
+        onControlMessage(msg);
+      } else {
+        onPose(msg);
+      }
+    };
+
+    socket.onclose = () => {
+      if (currentSocket === socket) currentSocket = null;
+      setStatus("bad", "Disconnected — reconnecting…");
+      scheduleReconnect();
+    };
+
+    socket.onerror = () => {
+      socket.close();
+    };
+  }
+
+  function scheduleReconnect() {
+    setTimeout(connect, reconnectDelay);
+    reconnectDelay = Math.min(RECONNECT_MAX, reconnectDelay * 1.6);
+  }
+
+  // ---------------------------------------------------------------------
+  // Boot.
+  // ---------------------------------------------------------------------
+  resizeCanvas();
+  loadFloorplan();
+  connect();
+})();
+</script>
+</body>
+</html>
