@@ -7,9 +7,12 @@ the phone's position, streamed over WiFi.
 ## What's here
 
 - `server.py` - static file server (port 8080) + WebSocket broadcast hub
-  (port 8765). Requires Python 3.8+ and the `websockets` package.
+  (port 8765), plus a `POST /jobs` / `GET /jobs/<id>` stub for the
+  image-upload picker (see "Plan upload" below). Requires Python 3.8+ and
+  the `websockets` package.
 - `index.html` - the 2D spectator map page: walls, rooms, a live dot with
-  heading cone, and a trail. No build step, no external assets.
+  heading cone, a trail, and plan-upload controls (JSON and a stubbed
+  image path - see "Plan upload" below). No build step, no external assets.
 - `ar.html` - "Live Map AR Bridge": a WebXR + three.js page you open **on
   the phone** (not the laptop) as an alternative to running the real
   Unity app. It uses the phone's own camera/ARCore session to place the
@@ -70,6 +73,42 @@ the phone's position, streamed over WiFi.
 
 Phone and laptop must be on the same WiFi network/subnet for this to work
 (no cloud relay - it's a direct LAN broadcast hub).
+
+## Plan upload (index.html)
+
+The top-left panel on the map screen has two upload pickers, in addition to
+the default `?plan=` query-string flow:
+
+- **Load plan JSON…** - picks a `.json` file and renders it through the same
+  path the built-in plans use, entirely client-side (`FileReader`, no
+  upload to the server - the map already has everything it needs to draw).
+  It is validated first: must parse as JSON, be an object, and have a
+  `walls` array whose entries all have numeric
+  `start.x`/`start.y`/`end.x`/`end.y` (`rooms` is optional - a plan can be
+  walls-only). A bad file shows a specific error and leaves whatever plan
+  was already on screen alone, rather than blanking the canvas.
+- **Back to built-in** - re-fetches whatever `?plan=` names (`bungalow` by
+  default), no page reload needed. Disabled while a built-in plan is
+  already showing.
+- **Upload floorplan image…** - a **deliberate stub**, clearly labeled as
+  such in the UI. There is no inference service - MitUNet + CubiCasa run
+  only in Kaggle notebooks by hand today - so this exercises the REST async
+  job shape `planliftar-v1.md` specifies for the eventual real one:
+  `POST /jobs` with the image bytes -> `202 {job_id, status: "queued"}`,
+  then the page polls `GET /jobs/<job_id>` until `status: "done"`, at which
+  point it renders the `result` plan through the same shared path. The
+  result is always the canned `plans/bungalow.json` after a short simulated
+  delay - never an analysis of the uploaded image - and the UI says so
+  before, during, and after the "upload" so a demo can't be mistaken for
+  working inference. `server.py` caps the accepted body at 5 MB and answers
+  `413` (before reading the oversized body) past that.
+
+Both pickers share one caveat, shown as a standing note in the panel: the
+live pose stream is in the *loaded plan's* pixel space, so a phone that is
+still streaming against a different plan than what's on screen will show
+its dot in the wrong place until it loads the same plan too. This feature
+is map-screen-only by design; getting an uploaded plan to the phone is out
+of scope (see `ar.html`'s own docs below, which it does not touch).
 
 ## Live Map AR Bridge (ar.html)
 

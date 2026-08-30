@@ -93,10 +93,51 @@
     font-size: 13px;
     backdrop-filter: blur(6px);
     box-shadow: 0 4px 18px rgba(0, 0, 0, 0.35);
+    max-width: 300px;
   }
   .title b {
     font-weight: 600;
     letter-spacing: 0.02em;
+  }
+
+  /* Plan upload controls: JSON picker (real), image picker (stub), and the
+     two one-line caveats that go with them - see the task's Path 1/Path 2
+     split for why each note exists. */
+  .plan-controls {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 10px;
+  }
+  .plan-btn {
+    display: inline-block;
+    padding: 6px 10px;
+    border-radius: 6px;
+    border: 1px solid var(--panel-border);
+    background: rgba(255, 255, 255, 0.04);
+    color: var(--text);
+    font-size: 12px;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .plan-btn:hover { background: rgba(255, 255, 255, 0.08); }
+  .plan-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .stub-note {
+    margin-top: 8px;
+    font-size: 11px;
+    line-height: 1.5;
+    color: var(--warn);
+  }
+  .stub-note b { font-weight: 600; }
+  .job-status {
+    margin-top: 6px;
+    font-size: 12px;
+  }
+  .mismatch-note {
+    margin-top: 8px;
+    font-size: 11px;
+    line-height: 1.5;
+    color: var(--muted);
   }
   .err {
     position: fixed;
@@ -184,6 +225,30 @@
   <div class="title">
     <b>Spectator Live Map</b>
     <div class="muted" id="planInfo">loading floorplan&hellip;</div>
+
+    <div class="plan-controls">
+      <label class="plan-btn" for="jsonPlanInput">Load plan JSON&hellip;</label>
+      <input type="file" id="jsonPlanInput" accept=".json,application/json" hidden>
+      <button class="plan-btn" id="backToBuiltinBtn" type="button" disabled>Back to built-in</button>
+    </div>
+
+    <div class="plan-controls">
+      <label class="plan-btn" for="imagePlanInput">Upload floorplan image&hellip;</label>
+      <input type="file" id="imagePlanInput" accept="image/png,image/jpeg" hidden>
+    </div>
+    <div class="stub-note">
+      Image upload is a <b>simulated stub</b>: the server does not analyse
+      the image, it just returns a fixed sample plan after a short delay.
+      Real inference (MitUNet + CubiCasa) only runs by hand in Kaggle
+      notebooks today.
+    </div>
+    <div class="muted job-status" id="jobStatus" style="display:none;"></div>
+
+    <div class="mismatch-note">
+      Pose is streamed in the loaded plan's own pixel space &mdash; if the
+      phone is still on a different plan, the dot will land in the wrong
+      place until it loads this same one.
+    </div>
   </div>
 
   <div class="rightStack">
@@ -244,10 +309,17 @@
   const lastUpdateEl = document.getElementById("lastUpdate");
   const planInfoEl = document.getElementById("planInfo");
   const errBox = document.getElementById("errBox");
+  const jsonPlanInput = document.getElementById("jsonPlanInput");
+  const imagePlanInput = document.getElementById("imagePlanInput");
+  const backToBuiltinBtn = document.getElementById("backToBuiltinBtn");
+  const jobStatusEl = document.getElementById("jobStatus");
 
   function showError(msg) {
     errBox.textContent = msg;
     errBox.style.display = "block";
+  }
+  function clearError() {
+    errBox.style.display = "none";
   }
 
   // ---------------------------------------------------------------------
@@ -540,26 +612,171 @@
     return `plans/${safe}.json`;
   }
 
+  // Shared render path: fetch(), the JSON upload, and the image-upload stub
+  // all end up here, so view-fitting/redraw/live-dot behavior can't drift
+  // between them. `label` is what the plan-name HUD shows; `isBuiltin`
+  // controls whether "Back to built-in" is enabled (it's the escape hatch
+  // back to whatever ?plan= names, so it's disabled while that IS what's
+  // showing).
+  function applyPlan(data, label, isBuiltin) {
+    plan = data;
+    // A different plan has a different coordinate extent (see the
+    // mismatch-note in the UI), so any trail/dot collected against the
+    // PREVIOUS plan would be meaningless on this one - possibly even
+    // off-canvas. Drop it; it repopulates once a phone streams poses
+    // against this plan.
+    trail = [];
+    latest = null;
+    lastMessageAt = 0;
+
+    const wallCount = (plan.walls || []).length;
+    const roomCount = (plan.rooms || []).length;
+    planInfoEl.textContent = `${label} — ${wallCount} walls, ${roomCount} rooms`;
+    backToBuiltinBtn.disabled = !!isBuiltin;
+
+    computeTransform();
+    renderStatic();
+    draw();
+  }
+
   function loadFloorplan() {
+    const name = new URLSearchParams(location.search).get("plan") || "bungalow";
     fetch(planUrl(), { cache: "no-store" })
       .then((r) => {
         if (!r.ok) throw new Error("HTTP " + r.status);
         return r.json();
       })
       .then((data) => {
-        plan = data;
-        const wallCount = (plan.walls || []).length;
-        const roomCount = (plan.rooms || []).length;
-        planInfoEl.textContent = `${wallCount} walls, ${roomCount} rooms`;
-        computeTransform();
-        renderStatic();
-        draw();
+        clearError();
+        applyPlan(data, name, true);
       })
       .catch((err) => {
         showError("Failed to load floorplan.json: " + err.message);
         planInfoEl.textContent = "floorplan load failed";
       });
   }
+
+  // ---------------------------------------------------------------------
+  // Plan upload, Path 1 (JSON): read client-side with FileReader - this
+  // never touches the server, the map already has everything it needs to
+  // draw from the file alone. Validated before it ever reaches `plan`/the
+  // canvas, so a bad file leaves whatever was on screen alone rather than
+  // blanking it.
+  // ---------------------------------------------------------------------
+  function validatePlan(data) {
+    if (data === null || typeof data !== "object" || Array.isArray(data)) {
+      return "top-level JSON must be an object";
+    }
+    if (!Array.isArray(data.walls)) {
+      return "missing a \"walls\" array";
+    }
+    for (let i = 0; i < data.walls.length; i++) {
+      const w = data.walls[i];
+      const hasNums = w && w.start && w.end
+        && typeof w.start.x === "number" && typeof w.start.y === "number"
+        && typeof w.end.x === "number" && typeof w.end.y === "number";
+      if (!hasNums) {
+        return `walls[${i}] needs numeric start.x/start.y/end.x/end.y`;
+      }
+    }
+    // Rooms are optional - a plan can be walls-only - but if present must
+    // at least be the right shape.
+    if (data.rooms !== undefined && !Array.isArray(data.rooms)) {
+      return "\"rooms\" must be an array when present";
+    }
+    return null; // valid
+  }
+
+  function loadPlanFile(file) {
+    const reader = new FileReader();
+    reader.onload = () => {
+      let data;
+      try {
+        data = JSON.parse(reader.result);
+      } catch (e) {
+        showError(`"${file.name}" is not valid JSON: ${e.message}`);
+        return;
+      }
+      const problem = validatePlan(data);
+      if (problem) {
+        showError(`"${file.name}" is not a usable plan: ${problem}`);
+        return;
+      }
+      clearError();
+      applyPlan(data, file.name, false);
+    };
+    reader.onerror = () => showError(`Failed to read "${file.name}".`);
+    reader.readAsText(file);
+  }
+
+  jsonPlanInput.addEventListener("change", (e) => {
+    const file = e.target.files && e.target.files[0];
+    e.target.value = ""; // so re-picking the same file fires "change" again
+    if (file) loadPlanFile(file);
+  });
+
+  backToBuiltinBtn.addEventListener("click", () => {
+    jobStatusEl.style.display = "none";
+    loadFloorplan();
+  });
+
+  // ---------------------------------------------------------------------
+  // Plan upload, Path 2 (image): DELIBERATE STUB. There is no inference
+  // service - MitUNet + CubiCasa run only in Kaggle notebooks by hand today
+  // - so this exercises the shape planliftar-v1.md specifies for the real
+  // thing (REST async job: POST /jobs -> 202 {job_id}; poll GET
+  // /jobs/<id> until "done") against a server.py stub that always resolves
+  // to the canned plans/bungalow.json. It never looks at the uploaded
+  // image; see the stub-note in the UI, which must stay visible so a demo
+  // can't be mistaken for working inference.
+  // ---------------------------------------------------------------------
+  const JOB_POLL_MS = 400;
+
+  function describeJobError(err) {
+    showError(`Image upload stub failed: ${err.message}`);
+    jobStatusEl.style.display = "none";
+  }
+
+  function pollJob(jobId, file) {
+    fetch(`/jobs/${jobId}`)
+      .then((r) => {
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        return r.json();
+      })
+      .then((body) => {
+        if (body.status === "done") {
+          clearError();
+          jobStatusEl.textContent =
+            `Simulated job done — rendering the fixed sample plan (not an analysis of "${file.name}").`;
+          applyPlan(body.result, "sample plan (image stub)", false);
+        } else {
+          jobStatusEl.textContent = `Simulated job ${jobId}: ${body.status}…`;
+          setTimeout(() => pollJob(jobId, file), JOB_POLL_MS);
+        }
+      })
+      .catch(describeJobError);
+  }
+
+  imagePlanInput.addEventListener("change", (e) => {
+    const file = e.target.files && e.target.files[0];
+    e.target.value = "";
+    if (!file) return;
+    jobStatusEl.style.display = "block";
+    jobStatusEl.textContent = "Uploading (simulated — no real analysis happens)…";
+    fetch("/jobs", { method: "POST", body: file })
+      .then((r) => {
+        if (r.status === 413) {
+          return r.json().then((b) => { throw new Error(b.error || "upload too large"); });
+        }
+        if (r.status !== 202) throw new Error("HTTP " + r.status);
+        return r.json();
+      })
+      .then((body) => {
+        jobStatusEl.textContent = `Simulated job ${body.job_id}: ${body.status}…`;
+        pollJob(body.job_id, file);
+      })
+      .catch(describeJobError);
+  });
 
   // ---------------------------------------------------------------------
   // Live player state (pose messages: {x, y, yaw_deg} in plan px space).

@@ -51,6 +51,28 @@ regenerated automatically on the next start.
 
 Dependencies: Python 3.8+, stdlib, and the `websockets` package
 (pip install websockets). `--tls` additionally needs `cryptography`.
+
+Plan-upload job stub (POST /jobs, GET /jobs/<id>)
+--------------------------------------------------
+`index.html`'s image-upload picker is a deliberate stub for a backend that
+does not exist yet: MitUNet + CubiCasa inference only runs by hand in Kaggle
+notebooks today. `planliftar-v1.md` specifies the eventual transport as a
+REST async job API (no WebSocket), so this stub mirrors that shape rather
+than inventing a different one that would need reworking later:
+
+  - POST /jobs with the image bytes as the raw body -> 202 +
+    {"job_id", "status": "queued"}.
+  - GET /jobs/<job_id> -> {"status": "queued"|"running"|"done", ...},
+    reaching {"status": "done", "result": <plan JSON>} after a short
+    simulated delay.
+
+The "result" is always `plans/bungalow.json` - a canned stand-in, never a
+real analysis of the uploaded image. Jobs live in a plain dict in memory
+(JOBS below); nothing is written to disk, and the uploaded bytes themselves
+are read into memory just long enough to discard. Because this server binds
+to 0.0.0.0 on a LAN, an unbounded read on POST /jobs would be a real DoS
+hazard even for a dev tool, so the body size is capped (MAX_UPLOAD_BYTES)
+and anything larger gets 413 before the rest of the body is read.
 """
 
 import argparse
@@ -60,10 +82,14 @@ import http.server
 import ipaddress
 import json
 import os
+import re
 import socket
 import ssl
 import sys
 import threading
+import time
+import urllib.parse
+import uuid
 
 import websockets
 
@@ -79,6 +105,24 @@ STATIC_DIR = os.path.dirname(os.path.abspath(__file__))
 CERT_DIR = os.path.join(STATIC_DIR, ".certs")
 CERT_FILE = os.path.join(CERT_DIR, "livemap-cert.pem")
 KEY_FILE = os.path.join(CERT_DIR, "livemap-key.pem")
+
+# --------------------------------------------------------------------------
+# Plan-upload job stub state. See the module docstring for the contract.
+# --------------------------------------------------------------------------
+MAX_UPLOAD_BYTES = 5 * 1024 * 1024  # a "few MB" cap on POST /jobs bodies
+JOB_QUEUED_SECS = 1.0    # how long GET /jobs/<id> reports "queued"
+JOB_RUNNING_SECS = 1.5   # ...then "running" for this long...
+                          # ...then "done" forever after (elapsed-based, no
+                          # timer thread needed).
+JOB_PATH_RE = re.compile(r"^/jobs/([A-Za-z0-9_-]+)$")
+
+JOBS = {}  # job_id -> creation time.monotonic(), guarded by JOBS_LOCK
+JOBS_LOCK = threading.Lock()
+
+# The canned "result" every job resolves to - loaded once at startup, not
+# per-request. Never derived from an uploaded image; see module docstring.
+with open(os.path.join(STATIC_DIR, "plans", "bungalow.json"), "r", encoding="utf-8") as _f:
+    STUB_PLAN_RESULT = json.load(_f)
 
 
 # --------------------------------------------------------------------------
@@ -228,8 +272,96 @@ class QuietHandler(http.server.SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=STATIC_DIR, **kwargs)
 
+    def address_string(self):
+        """Return the raw client IP, skipping BaseHTTPRequestHandler's reverse-DNS.
+
+        The default implementation calls socket.getfqdn(), which for a LAN address
+        with no PTR record blocks until the resolver times out - measured at ~4.5s
+        for 192.168.x.x here, against 0.007s for 127.0.0.1 (the hosts file), which
+        is why this is invisible when testing from the laptop and crippling from
+        the phone. send_response() calls log_request() BEFORE writing the body, so
+        that delay lands on every single request: every page load, every plan
+        fetch, and every /jobs poll.
+        """
+        return self.client_address[0]
+
     def log_message(self, fmt, *args):
         print(f"[http] {self.address_string()} - {fmt % args}")
+
+    def _send_json(self, status, payload):
+        body = json.dumps(payload).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    # -- GET /jobs/<id>, else fall through to normal static-file serving. --
+    def do_GET(self):
+        path = urllib.parse.urlsplit(self.path).path
+        match = JOB_PATH_RE.match(path)
+        if match:
+            self._handle_job_status(match.group(1))
+            return
+        super().do_GET()
+
+    # -- POST /jobs (image-upload job stub); nothing else accepts POST. --
+    def do_POST(self):
+        path = urllib.parse.urlsplit(self.path).path
+        if path == "/jobs":
+            self._handle_job_create()
+            return
+        self.send_error(404, "not found")
+
+    def _handle_job_create(self):
+        length_header = self.headers.get("Content-Length")
+        try:
+            content_length = int(length_header)
+        except (TypeError, ValueError):
+            self._send_json(411, {"error": "Content-Length required"})
+            self.close_connection = True
+            return
+
+        if content_length > MAX_UPLOAD_BYTES:
+            # Reject BEFORE reading the body - reading an attacker-declared
+            # multi-GB Content-Length just to discard it is itself the
+            # hazard being guarded against. Closing the connection avoids
+            # the unread body desyncing the next request on this socket.
+            self._send_json(
+                413,
+                {"error": f"upload exceeds {MAX_UPLOAD_BYTES} byte limit"},
+            )
+            self.close_connection = True
+            return
+
+        body = self.rfile.read(content_length)
+        job_id = uuid.uuid4().hex
+        with JOBS_LOCK:
+            JOBS[job_id] = time.monotonic()
+        print(f"[jobs] created {job_id} ({len(body)} bytes received, discarded - stub, no inference)")
+        self._send_json(202, {"job_id": job_id, "status": "queued"})
+
+    def _handle_job_status(self, job_id):
+        with JOBS_LOCK:
+            created = JOBS.get(job_id)
+        if created is None:
+            self._send_json(404, {"error": "unknown job_id"})
+            return
+
+        elapsed = time.monotonic() - created
+        if elapsed < JOB_QUEUED_SECS:
+            status = "queued"
+        elif elapsed < JOB_QUEUED_SECS + JOB_RUNNING_SECS:
+            status = "running"
+        else:
+            status = "done"
+
+        payload = {"job_id": job_id, "status": status}
+        if status == "done":
+            # Always the canned sample - see module docstring. This is a
+            # stub, not inference over whatever image was uploaded.
+            payload["result"] = STUB_PLAN_RESULT
+        self._send_json(200, payload)
 
 
 def run_http_server(ssl_ctx=None):
