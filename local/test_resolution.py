@@ -119,7 +119,7 @@ def run_pipeline_at_scale(scale):
     seal_mask, cubicasa_rooms, fixtures, _m3 = stage_cubicasa_seal(
         lines, sealed, sg, rf, t_med, 0, 0, H, W, cfg=cfg)
 
-    ctx = stage_regions_and_walls(lines, seal_mask, dist, cfg)
+    ctx = stage_regions_and_walls(lines, seal_mask, dist, cfg, prob)
 
     wall_lengths = [
         math.hypot(w["end"]["x"] - w["start"]["x"], w["end"]["y"] - w["start"]["y"])

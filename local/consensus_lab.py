@@ -63,6 +63,62 @@ CFG = {
     # be swept too; default matches the notebook exactly.
     "MATCH_MIN_IOU": 0.5,
 
+    # wall-geometry-fixes -- room-selection wall-probability gate (see
+    # stage_regions_and_walls). The cell-8 exterior test only strips components
+    # whose BOUNDING BOX touches an image edge; a large blank-margin region that is
+    # fully interior to the (already auto-cropped) canvas slips through and is
+    # counted as a "room" purely because it clears MIN_ROOM_AREA, even though it has
+    # no wall evidence and can never match anything (see local/README.md's
+    # "Findings: why is consensus 0.07?" -- MitUNet label 2 on the sample plan,
+    # area 1,041,398px, contributes zero possible IoU).
+    #
+    # Two signals were measured and rejected outright -- not just tuned around --
+    # because they are not evidence of blankness at all, not because of a threshold
+    # problem:
+    #   - mean prob over the region's own pixel mask ("interior"): a real room's
+    #     interior IS empty floor, so this cannot discriminate in principle. Label
+    #     2 measures 0.005x image mean; the real bedroom that is the pipeline's one
+    #     accepted match (room 7) measures 0.007x -- indistinguishable.
+    #   - boundary-ring mean (dilation-minus-region): actively anti-correlated.
+    #     Every connected component of the inverted seal mask is bounded by wall BY
+    #     CONSTRUCTION, so label 2 scores 8.04x image mean on this signal --
+    #     *higher* than most real rooms (room 7: 3.36x). No normalisation rescues
+    #     a signal that's measuring the wrong thing.
+    #
+    # Signal 1 (kept): mean wall_prob over the region's full bounding box (not just
+    # its own pixel mask), relative to the whole image's mean wall_prob. This is
+    # the exact quantity local/README.md's "Findings" section already cites (0.0030
+    # for label 2 / 0.121 for label 4 vs the image's 0.0774) and it is
+    # resolution-stable (verified at 0.5x/1x/2x, see local/test_resolution.py) --
+    # but ALONE it is not sufficient: it separates label 2 only because it measures
+    # local drawing density (how much ink sits in that region's neighbourhood), not
+    # whether the region is a room, so on its own it also flags real, sparse-area
+    # rooms as false positives (measured: labels 3, 8, 13, 14, 16, 17, 18 on this
+    # sample -- two of which, label 3 and label 18, have genuine IoU overlap with a
+    # real CubiCasa room, 0.372 and 0.345, so wrongly gating them is expensive, not
+    # a free cleanup).
+    #
+    # Signal 2 (new): the region's own area as a fraction of the total image area.
+    # What actually characterises page margin is being BIG *and* in an ink-free
+    # part of the sheet -- a small region in a sparse corner is just a room, not a
+    # margin. A region is only gated if BOTH signals say so (AND, not OR): low bbox
+    # ink density is necessary but not sufficient; it must also be large enough to
+    # plausibly be sheet margin rather than a real small room. Expressed as a
+    # fraction of image area (not t_med units) because this is about the region's
+    # share of the page, which is a scale-free quantity by construction -- an area
+    # in px^2 would not be.
+    #   0.10 -> label 2 is 0.186 of the image (1.86x above cutoff, gated); the
+    #   largest region signal-1 alone would have wrongly gated, label 3, is 0.006
+    #   of the image (17x below cutoff, survives); the largest surviving real room,
+    #   label 4, is 0.029 of the image (3.5x below cutoff, headroom on the other
+    #   side too). Any threshold between roughly 0.03 and 0.18 produces the same
+    #   result on this sample.
+    #
+    # 0.5 -> label 2's bbox_mean/img_mean = 0.039 (12.7x below the signal-1
+    # cutoff); label 4's = 1.560 (3.1x above it) at this sample's t_med=26.
+    "ROOM_WALL_GATE_BBOX_MEAN_FRAC": 0.5,
+    "ROOM_WALL_GATE_MIN_AREA_FRAC": 0.10,
+
     # Task A -- previously-hardcoded absolute pixel tolerances, now expressed as
     # fractions of t_med (median wall thickness in px, see stage_seal_thickness)
     # so behaviour doesn't drift with image resolution. Each fraction is chosen
@@ -654,8 +710,15 @@ def _postprocess_walls(lines, walls, dist, cfg, Himg, Wimg):
     return final
 
 
-def stage_regions_and_walls(lines, seal_mask, dist, cfg):
-    """Cell 6 (notebook cell index 8) -- rooms-first region extraction + wall derivation."""
+def stage_regions_and_walls(lines, seal_mask, dist, cfg, prob_full):
+    """Cell 6 (notebook cell index 8) -- rooms-first region extraction + wall derivation.
+
+    `prob_full` is the wall-probability map (float32, same H x W as `seal_mask`) --
+    threaded through explicitly (not stashed in `cfg`) so the wall-probability gate
+    below can compare each candidate region's own wall evidence against the image's
+    own probability statistics. See CFG["ROOM_WALL_GATE_BBOX_MEAN_FRAC"] and
+    CFG["ROOM_WALL_GATE_MIN_AREA_FRAC"] for the gate's design rationale.
+    """
     min_area = min_room_area(cfg)
     n, labels, stats, cents = cv2.connectedComponentsWithStats(
         cv2.bitwise_not(seal_mask * 255), connectivity=4)
@@ -665,8 +728,47 @@ def stage_regions_and_walls(lines, seal_mask, dist, cfg):
                 if stats[l, cv2.CC_STAT_LEFT] == 0 or stats[l, cv2.CC_STAT_TOP] == 0
                 or stats[l, cv2.CC_STAT_LEFT] + stats[l, cv2.CC_STAT_WIDTH] >= Wimg
                 or stats[l, cv2.CC_STAT_TOP] + stats[l, cv2.CC_STAT_HEIGHT] >= Himg}
-    room_ids = [l for l in range(1, n)
-                if l not in exterior and stats[l, cv2.CC_STAT_AREA] >= min_area]
+    room_ids_pre_gate = [l for l in range(1, n)
+                         if l not in exterior and stats[l, cv2.CC_STAT_AREA] >= min_area]
+
+    # Wall-probability gate: a region only counts as page margin (and is dropped
+    # from room_ids) if BOTH hold: its bounding box is ink-sparse (low wall_prob
+    # relative to the image) AND it is large enough, as a share of the whole
+    # image, to plausibly be sheet margin rather than a real small room. Signal 1
+    # alone flags real, sparse-area rooms too (see CFG comment); requiring both is
+    # what keeps this a page-margin detector instead of a general ink-density
+    # filter. See CFG["ROOM_WALL_GATE_BBOX_MEAN_FRAC"] /
+    # CFG["ROOM_WALL_GATE_MIN_AREA_FRAC"] for the full rationale and the
+    # alternatives (interior mean, boundary-ring mean) that were measured and
+    # rejected outright, not just tuned around.
+    img_mean_prob = float(prob_full.mean())
+    img_area = float(Himg * Wimg)
+    gate_frac = cfg["ROOM_WALL_GATE_BBOX_MEAN_FRAC"]
+    min_area_frac = cfg["ROOM_WALL_GATE_MIN_AREA_FRAC"]
+    room_ids = []
+    gated_out = []
+    for l in room_ids_pre_gate:
+        x, y, w, h, area = stats[l]
+        bbox_mean = float(prob_full[y:y + h, x:x + w].mean())
+        ratio = (bbox_mean / img_mean_prob) if img_mean_prob else 0.0
+        area_frac = area / img_area
+        if ratio < gate_frac and area_frac >= min_area_frac:
+            gated_out.append((l, bbox_mean, ratio, area_frac))
+        else:
+            room_ids.append(l)
+
+    if gated_out:
+        detail = "; ".join(
+            f"label {l} (bbox_mean={bm:.4f} = {r:.3f}x image mean, "
+            f"area={af:.3f}x image area)" for l, bm, r, af in gated_out)
+        log(lines, f"wall-prob gate: rejected {len(gated_out)} label(s) with "
+                    f"bbox_mean < {gate_frac:.2f}x image mean ({img_mean_prob:.4f}) "
+                    f"AND area >= {min_area_frac:.2f}x image area ({img_area:.0f}px): {detail}")
+    else:
+        log(lines, f"wall-prob gate: no labels rejected "
+                    f"(bbox_mean threshold {gate_frac:.2f}x image mean = {img_mean_prob:.4f}, "
+                    f"area threshold {min_area_frac:.2f}x image area = {img_area:.0f}px)")
+
     log(lines, f"labels: {n - 1}  exterior: {len(exterior)}  rooms: {len(room_ids)}")
 
     rooms = []
@@ -1143,7 +1245,7 @@ def main():
     mask, dist, m2 = stage_seal_thickness(lines, mask, cfg)
     cfg["_t_med"] = m2["t_med"]
     seal_mask, cubicasa_rooms, fixtures, m3 = stage_cubicasa_seal(lines, mask, sg, rf, m2["t_med"], cx0, cy0, H, W, cfg=cfg)
-    region_ctx = stage_regions_and_walls(lines, seal_mask, dist, cfg)
+    region_ctx = stage_regions_and_walls(lines, seal_mask, dist, cfg, prob_full)
     consensus_ctx = stage_consensus(lines, region_ctx["labels"], region_ctx["room_ids"], region_ctx["rooms"],
                                      region_ctx["walls"], cubicasa_rooms, cx0, cy0, cfg)
     consensus_final, consensus_split, split_ctx = stage_watershed_split(

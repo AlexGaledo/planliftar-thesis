@@ -5,15 +5,16 @@ prob map: (2048, 2730) offset (0, 0)
 components: naive@0.5 = 6  ->  hysteresis = 6   (healing metric; ideal ~1)
 t_med = 26.0px  seal kernel = 39px  components after close = 6
 seal layer: 182822 CubiCasa wall px + 16 opening bars (labeling copy only)
-labels: 19  exterior: 1  rooms: 14
-room polygons (closed by construction): [6, 5, 11, 5, 8, 4, 9, 14, 16, 4, 4, 4, 9, 4] vertices
+wall-prob gate: rejected 1 label(s) with bbox_mean < 0.50x image mean (0.0774) AND area >= 0.10x image area (5591040px): label 2 (bbox_mean=0.0030 = 0.039x image mean, area=0.186x image area)
+labels: 19  exterior: 1  rooms: 13
+room polygons (closed by construction): [5, 11, 5, 8, 4, 9, 14, 16, 4, 4, 4, 9, 4] vertices
 derived 240 raw wall runs from 45 adjacent label pairs
 wall post-process: 240 raw -> dedupe -> 146 -> axis-snap -> merge collinear -> 75 -> drop stubs -> 73 final walls over 43 label pairs (dup_tol=6.5px snap_angle=10.0deg collinear_tol=13.0px gap_tol=19.5px stub_len=26.0px)
 final 73 wall runs from 45 adjacent label pairs
-consensus: 1 matches / max(14 mitunet, 9 cubicasa) = 0.07
+consensus: 1 matches / max(13 mitunet, 9 cubicasa) = 0.08
 invariants: {'all_polygons_closed': True, 'min_area_ok': True, 'room_count_sane': True, 'has_rooms': True, 'loose_endpoints_warn': 6}
 routing: hard_fail=False  merged_rooms_note=True  needs_repair=False
-virtual split: 14 regions -> 17 sub-rooms; consensus 0.07 -> 0.06
+virtual split: 13 regions -> 16 sub-rooms; consensus 0.08 -> 0.06
 {
   "accepted": true,
   "reject_reasons": [],
@@ -21,10 +22,10 @@ virtual split: 14 regions -> 17 sub-rooms; consensus 0.07 -> 0.06
     "merged_rooms"
   ],
   "metrics": {
-    "rooms_mitunet": 14,
+    "rooms_mitunet": 13,
     "rooms_cubicasa": 9,
-    "consensus_iou": 0.071,
-    "consensus_raw": 0.071,
+    "consensus_iou": 0.077,
+    "consensus_raw": 0.077,
     "matches": 1,
     "wall_thickness_px": 26.0,
     "loose_endpoints": 6,
@@ -45,12 +46,14 @@ OK cubicasa_wall_px: reference=182822  computed=182822
 OK opening_bars: reference=16  computed=16
 OK labels: reference=19  computed=19
 OK exterior: reference=1  computed=1
-OK rooms: reference=14  computed=14
+!! rooms: reference=14  computed=13
+OK wall_runs: reference=73  computed=73
+OK adjacent_pairs: reference=45  computed=45
 OK matches: reference=1  computed=1
-OK rooms_mitunet: reference=14  computed=14
+!! rooms_mitunet: reference=14  computed=13
 OK rooms_cubicasa: reference=9  computed=9
-OK consensus: reference=0.07  computed=0.07142857142857142
-RESULT: reproduces the reference log numerically.
+!! consensus: reference=0.07  computed=0.07692307692307693
+RESULT: does NOT reproduce the reference log numerically. Either the wall/room geometry genuinely changed (intended - then re-snapshot local/ref/step2_reference.txt in the same commit), or the wall-prob/CubiCasa inputs are mispaired (see local/README.md).
 
 wrote <repo>\local\out\diagnostics.json
 wrote <repo>\local\out\consensus_overlay.png
