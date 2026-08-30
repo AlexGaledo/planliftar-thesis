@@ -63,6 +63,20 @@ CFG = {
     # be swept too; default matches the notebook exactly.
     "MATCH_MIN_IOU": 0.5,
 
+    # wall-geometry-fixes -- graded consensus (Task A/B, see graded_room_consensus).
+    # A CubiCasa room only merges into its dominant MitUNet region's many-to-one
+    # group (full union-based IoU credit) if that region owns MORE THAN HALF the
+    # room's own area; otherwise it scores its own plain IoU alone. Not an
+    # arbitrary sweep knob like MATCH_MIN_IOU: 0.5 is the unique threshold at
+    # which "this region is the room's majority owner" is a well-defined,
+    # mutually-exclusive structural fact (at most one region can hold >50% of a
+    # room's disjoint pixels), which is what stops an unrelated, badly
+    # over-segmented room from dragging down a genuinely clean match it happens
+    # to share an argmax-by-raw-pixel-count region with (measured on this
+    # sample: room_010_1, only 26% inside label 12, was contaminating the
+    # kitchen's isolated 0.448 down to ~0.38 before this gate was added).
+    "GRADED_MERGE_MAJORITY_FRAC": 0.5,
+
     # wall-geometry-fixes -- room-selection wall-probability gate (see
     # stage_regions_and_walls). The cell-8 exterior test only strips components
     # whose BOUNDING BOX touches an image edge; a large blank-margin region that is
@@ -297,6 +311,180 @@ def wall_endpoint_degrees(walls, tol=6.0):
 def build_room_masks(labels, room_ids):
     """Map each room label id to a uint8 binary mask of its label-map region."""
     return {rid: (labels == rid).astype(np.uint8) for rid in room_ids}
+
+
+def graded_room_consensus(labels, room_ids, area_pairs, cfg):
+    """Graded, many-to-one consensus score (wall-geometry-fixes Task A/B).
+
+    Replaces the binary Hungarian-match-with-cutoff / row-column-count formula
+    (consensus_legacy, computed unchanged and reported alongside -- see
+    stage_consensus) with a continuous, area-weighted score that:
+
+      A. has no cliff -- a region at IoU 0.448 contributes ~0.448 of its
+         room's weight, not 0 (see local/README.md "Findings" item 4 -- the
+         kitchen, MitUNet label 12 vs room_002_0, discarded outright today
+         purely for landing 0.05 under the 0.5 Hungarian cutoff);
+      B. lets ONE MitUNet region legitimately explain SEVERAL CubiCasa rooms.
+         Every surviving CubiCasa room is assigned to whichever single
+         MitUNet region overlaps it most, by raw pixel count (the same rule
+         stage_consensus's Job 2 already uses for the official max-overlap
+         mapping, recomputed here so this function is self-contained and
+         independently testable) -- but a room only actually MERGES into that
+         region's group if the region owns a MAJORITY of the room's own area
+         (overlap / room_area > CFG["GRADED_MERGE_MAJORITY_FRAC"], 0.5). Every
+         CubiCasa room clearing that bar and sharing the same dominant MitUNet
+         region is grouped together, and the group's score is one IoU: that
+         MitUNet region's mask against the UNION of the group's CubiCasa room
+         masks. A clean merge (the region exactly equals the union, no
+         leakage) scores 1.0 for every room in the group -- see
+         local/README.md item 2/2b: a MitUNet region correctly spanning
+         several real CubiCasa rooms is the pipeline's own accepted
+         "merged_rooms" outcome, not a segmentation failure, and this metric
+         is deliberately built to score it as agreement.
+
+         The majority-ownership bar matters and is NOT optional bookkeeping:
+         without it, a large CubiCasa room that MitUNet badly over-segments
+         (e.g. chopped into 7 pieces, no single piece holding more than ~26%
+         of it) still "wins" the argmax contest for whichever of its pieces
+         happens to be biggest -- which, on this branch's real sample, is the
+         SAME MitUNet region that is ALSO the kitchen's clean, isolated 0.448
+         match. Grouping them unqualified drags the kitchen's union down to
+         the combined rooms' union and its score down to ~0.38, contaminating
+         a genuinely good match with an unrelated room's over-segmentation
+         debris. 0.5 is not an arbitrary sweep constant: "more than half of
+         this room's own pixels sit in this one region" is a structural fact
+         that at most one region can ever satisfy for a given room (the
+         complement can't also exceed half), so the gate cannot be a cliff
+         two nearby regions straddle the way MATCH_MIN_IOU's union-based 0.5
+         can. A room that fails the bar keeps its own honest score: the plain
+         IoU between just that room and its dominant region (no group,
+         equivalent to a group of size 1) -- never zero, never someone else's
+         union.
+
+    Directionality is deliberately ASYMMETRIC -- this is the crux the task
+    brief calls out explicitly ("symmetric or penalised treatment of one-to-
+    many in the wrong direction"):
+
+      - many CubiCasa rooms -> one MitUNet region (open-plan merge): NOT
+        penalized, can legitimately reach 1.0. MitUNet's own wall map is
+        authoritative for whether a wall exists in this pipeline ("never
+        invents walls"); a region with no internal wall evidence spanning
+        several real rooms IS the pipeline's accepted output, not a scoring
+        failure to punish.
+      - one CubiCasa room -> many MitUNet regions (MitUNet over-segmentation):
+        IS penalized. A room's contribution is scored against the group-IoU
+        of whichever single region is its OWN dominant match (not a sum
+        across every region that touches it), and that region is compared to
+        the room's FULL area, not just the slice it happens to cover -- so a
+        room chopped into N roughly-equal MitUNet pieces caps out near 1/N
+        (whichever piece wins the "dominant" pixel-count contest for that
+        room), not near 1.0. This is what keeps pathological over-
+        segmentation (many small MitUNet regions tiling one CubiCasa room)
+        from scoring near 1.0 (see test_consensus_metric.py #4), without a
+        separate row/column-count penalty term.
+
+    A spurious/phantom MitUNet region (e.g. blank page margin) that never
+    wins the "dominant region" contest for any CubiCasa room contributes
+    nothing and COSTS nothing here -- unlike consensus_legacy's
+    max(rooms_mitunet, rooms_cubicasa) denominator, which such a region
+    inflates "for free" (see local/README.md finding 1). That is a
+    deliberate difference from the legacy formula, not an oversight: this
+    function only ever measures agreement about something CubiCasa says is a
+    real room, so it cannot be inflated OR deflated by MitUNet regions that
+    no CubiCasa room ever touches.
+
+    `area_pairs` is stage_consensus's Job-1 output: every CubiCasa room that
+    survived the fragment-noise area filter, as (room_dict, mask) pairs --
+    INCLUDING rooms with zero overlap against any MitUNet room, which score
+    0.0 here and pull the area-weighted average down. (consensus_legacy drops
+    these before computing cubi_masks/len(cubi_masks) and so never "sees"
+    them at all -- a whole CubiCasa room MitUNet missed entirely would
+    otherwise vanish from the denominator instead of costing anything, which
+    is exactly the kind of trivial-inflation loophole this metric must not
+    have.)
+
+    Returns (score, contributions): score is a float in [0, 1] (1.0 = every
+    surviving CubiCasa room's area is fully explained by a single MitUNet
+    region with no leakage; 0.0 = no surviving CubiCasa room has ANY overlap
+    with any MitUNet room). `contributions` is a list of per-CubiCasa-room
+    dicts (cubi_id, cubi_type, area_px, dominant_label, group_size, score)
+    for diagnostics/reporting -- this is what lets the per-pair breakdown
+    (e.g. the kitchen's 0.448) be read back out of the aggregate number.
+    """
+    if not area_pairs:
+        return 0.0, []
+
+    n_labels = int(labels.max()) + 1 if labels.size else 1
+    majority_frac = cfg["GRADED_MERGE_MAJORITY_FRAC"]
+
+    def _dominant(m):
+        mb = m.astype(bool)
+        if not mb.any() or not room_ids:
+            return 0, 0
+        counts = np.bincount(labels[mb], minlength=n_labels)
+        best_label, best_overlap = 0, 0
+        for rid in room_ids:
+            c = int(counts[rid]) if rid < len(counts) else 0
+            if c > best_overlap:
+                best_overlap, best_label = c, rid
+        return best_label, best_overlap
+
+    dominant_of = {}
+    qualifies = {}  # cubi_id -> bool, region owns a MAJORITY of this room's area
+    groups = {}  # mitunet label -> list of (cubi_id, mask) for QUALIFYING rooms only
+    for r, m in area_pairs:
+        area = float(m.sum())
+        lab, overlap = _dominant(m)
+        dominant_of[r["id"]] = lab
+        qual = lab != 0 and area > 0 and (overlap / area) > majority_frac
+        qualifies[r["id"]] = qual
+        if qual:
+            groups.setdefault(lab, []).append((r["id"], m))
+
+    group_iou = {}
+    for lab, members in groups.items():
+        region_mask = labels == lab
+        merged = np.zeros_like(region_mask)
+        for _, m in members:
+            merged |= m.astype(bool)
+        inter = np.count_nonzero(region_mask & merged)
+        union = np.count_nonzero(region_mask | merged)
+        group_iou[lab] = (inter / union) if union else 0.0
+
+    contributions = []
+    total_area = 0.0
+    total_weighted = 0.0
+    for r, m in area_pairs:
+        area = float(m.sum())
+        lab = dominant_of[r["id"]]
+        if not lab:
+            score, group_size = 0.0, 0
+        elif qualifies[r["id"]]:
+            # Majority-owned by its dominant region: use the (possibly
+            # multi-room) group score -- this is the many-to-one merge credit.
+            score = group_iou[lab]
+            group_size = len(groups[lab])
+        else:
+            # Dominant region owns less than half of this room: no merge
+            # credit borrowed from -- or lent to -- any other room. Score is
+            # this room's own plain IoU against just its dominant region.
+            region_mask = labels == lab
+            mb = m.astype(bool)
+            inter = np.count_nonzero(region_mask & mb)
+            union = np.count_nonzero(region_mask | mb)
+            score = (inter / union) if union else 0.0
+            group_size = 1
+        contributions.append({
+            "cubi_id": r["id"], "cubi_type": r.get("type", "?"),
+            "area_px": int(area), "dominant_label": int(lab),
+            "group_size": group_size, "majority_owned": bool(lab and qualifies[r["id"]]),
+            "score": float(score),
+        })
+        total_area += area
+        total_weighted += area * score
+
+    score = (total_weighted / total_area) if total_area else 0.0
+    return float(score), contributions
 
 
 def find_file(name, roots):
@@ -973,8 +1161,25 @@ def stage_consensus(lines, labels, room_ids, rooms, walls, cubicasa_rooms, cx0, 
         matches = hungarian_match(iou, min_iou=cfg["MATCH_MIN_IOU"])
     else:
         iou, matches = np.zeros((0, 0)), []
-    consensus = len(matches) / max(len(room_ids), len(cubi_masks), 1)
-    log(lines, f"consensus: {len(matches)} matches / max({len(room_ids)} mitunet, {len(cubi_masks)} cubicasa) = {consensus:.2f}")
+    # consensus_legacy: UNCHANGED formula -- binary >=MATCH_MIN_IOU Hungarian
+    # match, counted 1:1 over max(rooms_mitunet, rooms_cubicasa). Kept
+    # side-by-side per task D for comparison; no longer drives routing below
+    # (see graded_room_consensus() for what replaces it and why).
+    consensus_legacy = len(matches) / max(len(room_ids), len(cubi_masks), 1)
+    log(lines, f"consensus: {len(matches)} matches / max({len(room_ids)} mitunet, {len(cubi_masks)} cubicasa) = {consensus_legacy:.2f}")
+
+    # Task A/B -- graded, many-to-one consensus. This is now the score that
+    # drives routing/acceptance below. See graded_room_consensus()'s
+    # docstring for the full design rationale.
+    consensus, consensus_contributions = graded_room_consensus(labels, room_ids, area_pairs, cfg)
+
+    def _fmt_contrib(c):
+        grp = "" if c["group_size"] <= 1 else f", group of {c['group_size']}"
+        return f"{c['cubi_id']}({c['cubi_type']})={c['score']:.3f}[{c['area_px']}px^2 -> mitunet {c['dominant_label']}{grp}]"
+
+    contrib_str = "; ".join(_fmt_contrib(c) for c in consensus_contributions)
+    log(lines, f"consensus_graded: area-weighted score over {len(consensus_contributions)} "
+                f"cubicasa room(s) = {consensus:.3f}  [{contrib_str}]")
 
     inv = {
         "all_polygons_closed": all(polygon_is_closed(r["polygon"]) for r in rooms),
@@ -995,33 +1200,75 @@ def stage_consensus(lines, labels, room_ids, rooms, walls, cubicasa_rooms, cx0, 
     return {
         "all_cubi_pairs": all_cubi_pairs, "coverage_info": coverage_info,
         "min_room_area": min_area,
+        "area_pairs": area_pairs,
         "area_dropped_ids": area_dropped_ids, "area_dropped_total_px": area_dropped_total_px,
         "overlap_labels": overlap_labels, "overlap_px": overlap_px,
         "zero_overlap_ids": zero_overlap_ids, "zero_overlap_landed_in": landed_in,
         "surviving_ids": surviving_ids,
         "cubi_masks": cubi_masks, "cubi_pairs_final": cubi_pairs_final,
-        "room_masks": room_masks, "iou": iou, "matches": matches, "consensus": consensus,
+        "room_masks": room_masks, "iou": iou, "matches": matches,
+        "consensus": consensus, "consensus_legacy": consensus_legacy,
+        "consensus_contributions": consensus_contributions,
         "inv": inv, "n_loose": n_loose, "hard_fail": hard_fail,
         "merged_rooms_note": merged_rooms_note, "needs_repair": needs_repair,
     }
 
 
 def stage_watershed_split(lines, labels, room_ids, consensus_ctx, cfg):
-    """Cell 8 (notebook cell index 11) -- Layer 4 watershed VIRTUAL split for scoring."""
+    """Cell 8 (notebook cell index 11) -- Layer 4 watershed VIRTUAL split for scoring.
+
+    Task C -- seed gate: a CubiCasa room only acts as a watershed seed if its OWN
+    rasterized area is >= min_room_area(cfg) -- the same t_med-derived threshold
+    stage_consensus's Job 1 already filters cubi rooms by. Measured on this branch's
+    sample, this turns out to be a no-op in practice, not because the gate is wrong
+    but because stage_consensus's Job-1 area filter (added in the immediately
+    preceding commit, "Replace centroid room mapping with max-overlap, split
+    filter's two jobs") already removes every fragment-sized CubiCasa room --
+    including the 120-216px^2 slivers local/README.md's "why the watershed virtual
+    split makes it worse" section describes -- before a room can ever become a
+    `cubi_pairs_final` entry, which is this function's only source of seeds. So
+    every seed reaching this function already satisfies the gate today. The gate is
+    implemented anyway, verbatim as specified, because that invariant should not be
+    implicit/load-bearing across two functions: a future change to Job 1, or a
+    caller that feeds this function seeds from somewhere else, should not silently
+    reopen the fragment-seed problem. See the task report for the measured
+    (non-)effect on this sample, including why the split still nets out to no real
+    change even without the gate (two of the three raw seeds for label 12 are the
+    FULL room's centroid, which lands outside label 12's own boundary for a room
+    that's mostly in other MitUNet regions -- watershed can't grow from a marker
+    that isn't inside the region being split).
+    """
     merged_rooms_note = consensus_ctx["merged_rooms_note"]
     cubi_pairs_final = consensus_ctx["cubi_pairs_final"]
     cubi_masks = consensus_ctx["cubi_masks"]
+    area_pairs = consensus_ctx["area_pairs"]
     consensus = consensus_ctx["consensus"]
+    consensus_legacy = consensus_ctx["consensus_legacy"]
     consensus_split = consensus
+    consensus_split_legacy = consensus_legacy
+    min_area = min_room_area(cfg)
 
-    result = {"ran": False, "vroom_ids": [], "iou2": np.zeros((0, 0)), "matches2": []}
+    result = {
+        "ran": False, "vroom_ids": [], "iou2": np.zeros((0, 0)), "matches2": [],
+        "consensus_split_legacy": consensus_legacy, "contributions_split": [],
+        "gated_seed_drops": [],
+    }
     if merged_rooms_note and cubi_pairs_final:
         vlabels = np.zeros_like(labels)
         nxt = 1
+        gated_seed_drops = []
         for rid in room_ids:
             region = labels == rid
-            seeds = [np.nonzero(m) for r, m, l in cubi_pairs_final if l == rid]
-            seeds = [(int(ys.mean()), int(xs.mean())) for ys, xs in seeds if len(xs)]
+            seed_cands = [(r["id"], m) for r, m, l in cubi_pairs_final if l == rid]
+            seeds = []
+            for cubi_id, m in seed_cands:
+                area = int(m.sum())
+                if area < min_area:
+                    gated_seed_drops.append((int(rid), cubi_id, area))
+                    continue
+                ys, xs = np.nonzero(m)
+                if len(xs):
+                    seeds.append((int(ys.mean()), int(xs.mean())))
             if len(seeds) <= 1:
                 vlabels[region] = nxt
                 nxt += 1
@@ -1036,22 +1283,47 @@ def stage_watershed_split(lines, labels, room_ids, consensus_ctx, cfg):
                     vlabels[ws == k] = nxt
                     nxt += 1
         vroom_ids = list(range(1, nxt))
+        if gated_seed_drops:
+            detail = "; ".join(f"region {rid} seed {cid} ({area}px^2)" for rid, cid, area in gated_seed_drops)
+            log(lines, f"watershed seed gate: dropped {len(gated_seed_drops)} seed(s) below "
+                        f"min_room_area={min_area:.0f}px^2: {detail}")
+        else:
+            log(lines, f"watershed seed gate: no seeds below min_room_area={min_area:.0f}px^2 "
+                        f"(every cubi_pairs_final entry already survived stage_consensus's Job 1)")
+
         iou2 = pairwise_iou(vlabels, vroom_ids, cubi_masks)
         matches2 = hungarian_match(iou2, min_iou=cfg["MATCH_MIN_IOU"])
-        consensus_split = len(matches2) / max(len(vroom_ids), len(cubi_masks), 1)
+        consensus_split_legacy = len(matches2) / max(len(vroom_ids), len(cubi_masks), 1)
+        consensus_split, contributions_split = graded_room_consensus(vlabels, vroom_ids, area_pairs, cfg)
         log(lines, f"virtual split: {len(room_ids)} regions -> {len(vroom_ids)} sub-rooms; "
-                    f"consensus {consensus:.2f} -> {consensus_split:.2f}")
-        result = {"ran": True, "vlabels": vlabels, "vroom_ids": vroom_ids, "iou2": iou2, "matches2": matches2}
+                    f"consensus_legacy {consensus_legacy:.2f} -> {consensus_split_legacy:.2f}  "
+                    f"consensus_graded {consensus:.3f} -> {consensus_split:.3f}")
+        result = {
+            "ran": True, "vlabels": vlabels, "vroom_ids": vroom_ids, "iou2": iou2, "matches2": matches2,
+            "consensus_split_legacy": consensus_split_legacy, "contributions_split": contributions_split,
+            "gated_seed_drops": gated_seed_drops,
+        }
     else:
         log(lines, "no split needed")
 
     consensus_final = max(consensus, consensus_split)
+    consensus_final_legacy = max(consensus_legacy, consensus_split_legacy)
+    result["consensus_final_legacy"] = consensus_final_legacy
     return consensus_final, consensus_split, result
 
 
 def stage_acceptance(lines, rooms, cubi_masks, matches, consensus_final, consensus, cfg,
-                       t_med, n_loose, inv, needs_repair, merged_rooms_note, cx0, cy0):
-    """Cell 9 (notebook cell index 12) -- acceptance barrier."""
+                       t_med, n_loose, inv, needs_repair, merged_rooms_note, cx0, cy0,
+                       consensus_final_legacy, consensus_legacy):
+    """Cell 9 (notebook cell index 12) -- acceptance barrier.
+
+    `consensus_final`/`consensus` are now the graded score (see
+    graded_room_consensus) -- this is what `needs_repair`/`merged_rooms_note`
+    were already computed against upstream, and what the acceptance barrier
+    below reasons about. `consensus_final_legacy`/`consensus_legacy` are the
+    OLD binary-match formula, reported alongside per task D but not used for
+    any routing decision here.
+    """
     reasons = []
     if not inv["has_rooms"]:
         reasons.append("no_rooms")
@@ -1071,6 +1343,12 @@ def stage_acceptance(lines, rooms, cubi_masks, matches, consensus_final, consens
         "notes": (["merged_rooms"] if merged_rooms_note else []),
         "metrics": {"rooms_mitunet": len(rooms), "rooms_cubicasa": len(cubi_masks),
                     "consensus_iou": round(consensus_final, 3), "consensus_raw": round(consensus, 3),
+                    # Task D -- old formula, kept alongside for comparison; NOT used
+                    # for routing (see docstring). "_raw" suffix mirrors
+                    # consensus_raw/consensus_iou: "_legacy" is pre-split,
+                    # "_legacy_final" is post-split (max with the watershed pass).
+                    "consensus_legacy": round(consensus_legacy, 3),
+                    "consensus_legacy_final": round(consensus_final_legacy, 3),
                     "matches": len(matches),
                     "wall_thickness_px": round(t_med, 1), "loose_endpoints": int(n_loose),
                     "crop_offset": [int(cx0), int(cy0)]}
@@ -1162,7 +1440,12 @@ def build_diagnostics(region_ctx, consensus_ctx, split_ctx_tuple, cfg, cubicasa_
             entry["detail"] = {"coverage_ratio": cov.get("coverage_ratio")}
         cubicasa_rooms_diag.append(entry)
 
-    # -- official (post-filter) consensus block
+    # -- official (post-filter) consensus block. "matches"/"iou_matrix" here are
+    # the LEGACY (binary >=MATCH_MIN_IOU Hungarian) view; "graded" is the new
+    # area-weighted, many-to-one score that now drives routing -- see
+    # graded_room_consensus() and consensus_ctx["consensus_contributions"] for
+    # the per-CubiCasa-room breakdown (this is where the kitchen's 0.448 and
+    # the merged-room groups are visible).
     iou_official = consensus_ctx["iou"]
     matches_official = consensus_ctx["matches"]
     surviving_ids_list = consensus_ctx["surviving_ids"]
@@ -1172,6 +1455,9 @@ def build_diagnostics(region_ctx, consensus_ctx, split_ctx_tuple, cfg, cubicasa_
         "iou_matrix": iou_official.tolist(),
         "matches": [{"mitunet_label": int(room_ids[i]), "cubi_id": surviving_ids_list[j], "iou": v}
                     for i, j, v in matches_official],
+        "legacy_score": consensus_ctx["consensus_legacy"],
+        "graded_score": consensus_ctx["consensus"],
+        "graded_contributions": consensus_ctx["consensus_contributions"],
     }
 
     # -- watershed block
@@ -1188,8 +1474,13 @@ def build_diagnostics(region_ctx, consensus_ctx, split_ctx_tuple, cfg, cubicasa_
             "iou_matrix": iou2.tolist(),
             "matches": [{"vroom_id": int(vroom_ids[i]), "cubi_id": surviving_ids_list[j], "iou": v}
                         for i, j, v in matches2],
+            "gated_seed_drops": [{"mitunet_label": r, "cubi_id": c, "area_px": a}
+                                  for r, c, a in split_ctx["gated_seed_drops"]],
             "consensus_before_split": consensus_ctx["consensus"],
             "consensus_after_split": consensus_split,
+            "consensus_legacy_before_split": consensus_ctx["consensus_legacy"],
+            "consensus_legacy_after_split": split_ctx["consensus_split_legacy"],
+            "graded_contributions_after_split": split_ctx["contributions_split"],
         }
     else:
         watershed_block = {"ran": False, "reason": "merged_rooms_note is False or no surviving cubi rooms"}
@@ -1355,7 +1646,7 @@ def main():
     report = stage_acceptance(lines, region_ctx["rooms"], consensus_ctx["cubi_masks"], consensus_ctx["matches"],
                                consensus_final, consensus_ctx["consensus"], cfg, m2["t_med"], consensus_ctx["n_loose"],
                                consensus_ctx["inv"], consensus_ctx["needs_repair"], consensus_ctx["merged_rooms_note"],
-                               cx0, cy0)
+                               cx0, cy0, split_ctx["consensus_final_legacy"], consensus_ctx["consensus_legacy"])
 
     computed = {
         **m1, **{k: v for k, v in m2.items()}, **m3,
@@ -1363,7 +1654,10 @@ def main():
         "matches": len(consensus_ctx["matches"]),
         "rooms_mitunet": len(region_ctx["rooms"]),
         "rooms_cubicasa": len(consensus_ctx["cubi_masks"]),
-        "consensus": consensus_ctx["consensus"],
+        # Fidelity check is against a reference log that predates the graded
+        # score -- it encodes consensus_legacy's formula, so that's what must
+        # be compared here, not the new graded "consensus" value.
+        "consensus": consensus_ctx["consensus_legacy"],
     }
     ref = parse_reference_log(args.reference_log)
     fidelity = compare_to_reference(lines, computed, ref)
