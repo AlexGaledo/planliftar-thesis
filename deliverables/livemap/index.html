@@ -633,7 +633,9 @@
   // back to whatever ?plan= names, so it's disabled while that IS what's
   // showing).
   function applyPlan(data, label, isBuiltin) {
-    plan = data;
+    // Idempotent: also covers the ?plan= fetch and the job-stub result, so no
+    // render path can receive un-normalised coordinates.
+    plan = normalizePlan(data);
     // A different plan has a different coordinate extent (see the
     // mismatch-note in the UI), so any trail/dot collected against the
     // PREVIOUS plan would be meaningless on this one - possibly even
@@ -677,6 +679,42 @@
   // canvas, so a bad file leaves whatever was on screen alone rather than
   // blanking it.
   // ---------------------------------------------------------------------
+  // Three coordinate conventions exist across this project's own files, so the
+  // loader normalises rather than rejecting two of them:
+  //
+  //   schema 1.0  "start": [x, y]      + thickness_px   (mitunet_geometry.json,
+  //                                                      out-cubicasa/sample_geometry.json
+  //                                                      - the pipeline itself reads this
+  //                                                      form via np.array(w["start"]))
+  //   forked      "start": {x, y}      + thickness      (thickness in METRES)
+  //   schema 2.0  "start": {x, y}      + thickness      (thickness in px - our export)
+  //
+  // Everything downstream expects {x, y} objects and a px thickness, so convert
+  // once here. Metre-thickness plans (no thickness_px, values < 1) are left as
+  // they are and simply draw hairline-thin - guessing a pixels_per_meter to
+  // rescale them would invent geometry, and `scale.pixels_per_meter` is marked
+  // "assumed_default" with confidence 0.0 in the files that carry it.
+  function normalizePlan(data) {
+    if (!data || typeof data !== "object" || !Array.isArray(data.walls)) return data;
+    const pt = (v) => (Array.isArray(v) && v.length >= 2
+      ? { x: v[0], y: v[1] }
+      : v);
+    data.walls = data.walls.map((w) => {
+      if (!w || typeof w !== "object") return w;
+      const out = { ...w, start: pt(w.start), end: pt(w.end) };
+      if (typeof out.thickness !== "number" && typeof w.thickness_px === "number") {
+        out.thickness = w.thickness_px;
+      }
+      return out;
+    });
+    if (Array.isArray(data.rooms)) {
+      data.rooms = data.rooms.map((r) => (r && Array.isArray(r.polygon)
+        ? { ...r, polygon: r.polygon.map(pt) }
+        : r));
+    }
+    return data;
+  }
+
   function validatePlan(data) {
     if (data === null || typeof data !== "object" || Array.isArray(data)) {
       return "top-level JSON must be an object";
@@ -711,6 +749,9 @@
         showError(`"${file.name}" is not valid JSON: ${e.message}`);
         return;
       }
+      // Normalise coordinate form BEFORE validating, so a schema-1.0 plan with
+      // [x, y] arrays is accepted rather than rejected for lacking start.x.
+      data = normalizePlan(data);
       const problem = validatePlan(data);
       if (problem) {
         showError(`"${file.name}" is not a usable plan: ${problem}`);
