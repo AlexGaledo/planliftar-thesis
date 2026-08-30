@@ -52,13 +52,40 @@ CFG = {
     "HYST_HIGH": 0.50,
     "SEAL_FACTOR": 1.5,    # seal openings narrower than SEAL_FACTOR * wall thickness
     "CONSENSUS_MIN": 0.70,  # Layer 3 threshold (Phase 2) -- routing, NOT the match cutoff
-    "MIN_ROOM_AREA": 2000,  # px^2, same default as v1 spike
+    # Minimum plausible room area. Was an absolute 2000px^2, which made room COUNT
+    # resolution-dependent (10/14/16 rooms at 0.5x/1x/2x - see local/test_resolution.py).
+    # Expressed in t_med^2 units: 2000/26^2 reproduces exactly 2000px^2 at t_med=26.
+    "MIN_ROOM_AREA_T_MED_SQ": 2000.0 / (26.0 ** 2),  # -> 2000.0 px^2 at t_med=26
     "WALL_HEIGHT": 2.5,     # relative units for GLB extrusion (Phase 3) -- unused here
     # Not a CFG constant in the notebook -- it's the literal `min_iou=0.5` hardcoded
     # into every `hungarian_match(...)` call in cell 7/8. Broken out here so it can
     # be swept too; default matches the notebook exactly.
     "MATCH_MIN_IOU": 0.5,
+
+    # Task A -- previously-hardcoded absolute pixel tolerances, now expressed as
+    # fractions of t_med (median wall thickness in px, see stage_seal_thickness)
+    # so behaviour doesn't drift with image resolution. Each fraction is chosen
+    # so multiplier * t_med reproduces the old hardcoded constant exactly at this
+    # sample's t_med=26.0px -- native-resolution output is unchanged.
+    "WALL_EPS_T_MED_FRAC": 3.0 / 26.0,           # approxPolyDP epsilon, wall boundary contours -> 3.0px at t_med=26
+    "MIN_SEG_LEN_T_MED_FRAC": 5.0 / 26.0,        # min wall-segment length (compared squared) -> 5.0px at t_med=26
+    "MIN_BOUNDARY_PTS_T_MED_FRAC": 5.0 / 26.0,   # min boundary-px count per label pair -> 5.0px at t_med=26
+    "OPENING_BAR_MIN_T_MED_FRAC": 6.0 / 26.0,    # floor on opening-bar thickness -> 6.0px at t_med=26
+    "WALL_MIN_THICKNESS_T_MED_FRAC": 2.0 / 26.0,  # floor on rasterized CubiCasa wall thickness -> 2.0px at t_med=26
 }
+
+
+def min_room_area(cfg):
+    """MIN_ROOM_AREA in px^2, derived from t_med so it scales with resolution.
+
+    Areas go as length^2, so the multiplier is applied to t_med^2. Requires
+    cfg["_t_med"]; see the guard in stage_regions_and_walls for why a missing
+    value is an error rather than a default.
+    """
+    t = cfg.get("_t_med", 0.0)
+    if not t:
+        raise ValueError("cfg['_t_med'] is unset or zero; cannot derive MIN_ROOM_AREA")
+    return cfg["MIN_ROOM_AREA_T_MED_SQ"] * (t ** 2)
 
 
 def log(lines, msg):
@@ -332,18 +359,23 @@ def stage_seal_thickness(lines, mask, cfg):
     return mask, dist, {"t_med": t_med, "seal_kernel": k, "components_after_close": comps_after}
 
 
-def stage_cubicasa_seal(lines, mask, sg, rf, t_med, cx0, cy0, H, W):
+def stage_cubicasa_seal(lines, mask, sg, rf, t_med, cx0, cy0, H, W, cfg=None):
     """Cell 5 (notebook cell index 7) -- CubiCasa seal hints, labeling only."""
+    cfg = CFG if cfg is None else cfg
     cubicasa_rooms = rf.get("rooms", [])
     fixtures = rf.get("fixtures", [])
 
     walls_np = [(np.array(w["start"], float), np.array(w["end"], float),
                  w.get("thickness_px", t_med)) for w in sg["walls"]]
 
+    # resolution-relative floor on rasterized CubiCasa wall thickness (was hardcoded
+    # `2`); rounds to 2 at this sample's t_med=26, so native-res output is unchanged.
+    min_wall_thickness = round(cfg["WALL_MIN_THICKNESS_T_MED_FRAC"] * t_med)
+
     cubi = np.zeros_like(mask)
     for a, b, th in walls_np:
         cv2.line(cubi, (int(a[0] - cx0), int(a[1] - cy0)), (int(b[0] - cx0), int(b[1] - cy0)),
-                  1, thickness=int(max(2, th)))
+                  1, thickness=int(max(min_wall_thickness, th)))
 
     def nearest_wall_dir(p):
         best, bd = None, 1e18
@@ -357,6 +389,10 @@ def stage_cubicasa_seal(lines, mask, sg, rf, t_med, cx0, cy0, H, W):
         nn = np.linalg.norm(best)
         return (best / nn) if nn else np.array([1.0, 0.0])
 
+    # resolution-relative floor on opening-bar thickness (was hardcoded `6`); rounds
+    # to 6 at this sample's t_med=26, so native-res output is unchanged.
+    opening_bar_floor = round(cfg["OPENING_BAR_MIN_T_MED_FRAC"] * t_med)
+
     seal_mask = cv2.bitwise_or(mask, cubi)
     sealed = 0
     for o in sg["openings"]:
@@ -367,7 +403,7 @@ def stage_cubicasa_seal(lines, mask, sg, rf, t_med, cx0, cy0, H, W):
         d = nearest_wall_dir(p)
         L = 1.6 * o["width_px"]
         cv2.line(seal_mask, (int(fx - d[0] * L / 2), int(fy - d[1] * L / 2)),
-                  (int(fx + d[0] * L / 2), int(fy + d[1] * L / 2)), 1, thickness=max(6, int(t_med)))
+                  (int(fx + d[0] * L / 2), int(fy + d[1] * L / 2)), 1, thickness=max(opening_bar_floor, int(t_med)))
         sealed += 1
     cubi_px = int(cubi.sum())
     log(lines, f"seal layer: {cubi_px} CubiCasa wall px + {sealed} opening bars (labeling copy only)")
@@ -376,6 +412,7 @@ def stage_cubicasa_seal(lines, mask, sg, rf, t_med, cx0, cy0, H, W):
 
 def stage_regions_and_walls(lines, seal_mask, dist, cfg):
     """Cell 6 (notebook cell index 8) -- rooms-first region extraction + wall derivation."""
+    min_area = min_room_area(cfg)
     n, labels, stats, cents = cv2.connectedComponentsWithStats(
         cv2.bitwise_not(seal_mask * 255), connectivity=4)
 
@@ -385,7 +422,7 @@ def stage_regions_and_walls(lines, seal_mask, dist, cfg):
                 or stats[l, cv2.CC_STAT_LEFT] + stats[l, cv2.CC_STAT_WIDTH] >= Wimg
                 or stats[l, cv2.CC_STAT_TOP] + stats[l, cv2.CC_STAT_HEIGHT] >= Himg}
     room_ids = [l for l in range(1, n)
-                if l not in exterior and stats[l, cv2.CC_STAT_AREA] >= cfg["MIN_ROOM_AREA"]]
+                if l not in exterior and stats[l, cv2.CC_STAT_AREA] >= min_area]
     log(lines, f"labels: {n - 1}  exterior: {len(exterior)}  rooms: {len(room_ids)}")
 
     rooms = []
@@ -401,6 +438,22 @@ def stage_regions_and_walls(lines, seal_mask, dist, cfg):
     _, (iy, ix) = ndimage.distance_transform_edt(labels == 0, return_indices=True)
     assign = labels[iy, ix]
 
+    # resolution-relative pixel tolerances (were hardcoded absolute px); each rounds
+    # to its old hardcoded value at this sample's t_med=26, so native-res output is
+    # unchanged, but they now scale with wall thickness at other resolutions.
+    # `_t_med` is set by main() (and by any caller) from stage_seal_thickness. It is
+    # load-bearing for all three tolerances below: defaulting it to 0 would silently
+    # disable every filter and make approxPolyDP keep every pixel as a vertex, so a
+    # missing value is an error, not a fallback.
+    t_med_ref = cfg.get("_t_med", 0.0)
+    if not t_med_ref:
+        raise ValueError(
+            "cfg['_t_med'] is unset or zero; set it from stage_seal_thickness's "
+            "t_med before calling stage_regions_and_walls")
+    wall_eps = cfg["WALL_EPS_T_MED_FRAC"] * t_med_ref  # was hardcoded `3`
+    min_boundary_pts = int(round(cfg["MIN_BOUNDARY_PTS_T_MED_FRAC"] * t_med_ref))  # was hardcoded `5`
+    min_seg_len_sq = int(round(cfg["MIN_SEG_LEN_T_MED_FRAC"] * t_med_ref)) ** 2  # was hardcoded `25` (5px squared)
+
     wall_px = seal_mask.astype(bool)
     a = np.where(wall_px, assign, 0)
     pairs = {}
@@ -415,17 +468,17 @@ def stage_regions_and_walls(lines, seal_mask, dist, cfg):
     walls = []
     wid = 0
     for (la, lb), pts in pairs.items():
-        if len(pts) < 5:
+        if len(pts) < min_boundary_pts:
             continue
         pm = np.zeros_like(seal_mask)
         for x, y in pts:
             pm[y, x] = 1
         cnts, _ = cv2.findContours(pm, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
         for c in cnts:
-            approx = cv2.approxPolyDP(c, 3, False)[:, 0, :]
+            approx = cv2.approxPolyDP(c, wall_eps, False)[:, 0, :]
             for i in range(len(approx) - 1):
                 (x1, y1), (x2, y2) = approx[i], approx[i + 1]
-                if (int(x1) - int(x2)) ** 2 + (int(y1) - int(y2)) ** 2 < 25:
+                if (int(x1) - int(x2)) ** 2 + (int(y1) - int(y2)) ** 2 < min_seg_len_sq:
                     continue
                 mx, my = int((x1 + x2) // 2), int((y1 + y2) // 2)
                 walls.append({"id": f"w{wid}",
@@ -481,7 +534,7 @@ def stage_consensus(lines, labels, room_ids, rooms, walls, cubicasa_rooms, cx0, 
 
     inv = {
         "all_polygons_closed": all(polygon_is_closed(r["polygon"]) for r in rooms),
-        "min_area_ok": all(r["area_px"] >= cfg["MIN_ROOM_AREA"] for r in rooms),
+        "min_area_ok": all(r["area_px"] >= min_room_area(cfg) for r in rooms),
         "room_count_sane": 1 <= len(rooms) <= 40,
         "has_rooms": len(rooms) > 0,
     }
@@ -832,7 +885,7 @@ def main():
     mask, m1 = stage_hysteresis(lines, prob_full, cfg)
     mask, dist, m2 = stage_seal_thickness(lines, mask, cfg)
     cfg["_t_med"] = m2["t_med"]
-    seal_mask, cubicasa_rooms, fixtures, m3 = stage_cubicasa_seal(lines, mask, sg, rf, m2["t_med"], cx0, cy0, H, W)
+    seal_mask, cubicasa_rooms, fixtures, m3 = stage_cubicasa_seal(lines, mask, sg, rf, m2["t_med"], cx0, cy0, H, W, cfg=cfg)
     region_ctx = stage_regions_and_walls(lines, seal_mask, dist, cfg)
     consensus_ctx = stage_consensus(lines, region_ctx["labels"], region_ctx["room_ids"], region_ctx["rooms"],
                                      region_ctx["walls"], cubicasa_rooms, cx0, cy0, cfg)
