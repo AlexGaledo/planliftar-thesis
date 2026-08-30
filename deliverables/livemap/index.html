@@ -6,20 +6,20 @@
 <title>Live Floorplan Map</title>
 <style>
   :root {
-    --bg: #0b0e14;
-    --panel: rgba(18, 22, 32, 0.85);
+    --bg: #080808;
+    --panel: rgba(22, 22, 22, 0.88);
     --panel-border: rgba(255, 255, 255, 0.08);
-    --text: #e6e9f0;
-    --muted: #7b8496;
-    --wall: rgba(210, 218, 235, 0.9);
-    --room-fill: rgba(90, 140, 230, 0.07);
-    --room-stroke: rgba(120, 160, 240, 0.18);
-    --player: #39f0c0;
-    --player-glow: rgba(57, 240, 192, 0.35);
-    --trail: rgba(57, 240, 192, 0.45);
-    --ok: #39f0c0;
-    --bad: #ff5f6d;
-    --warn: #ffb020;
+    --text: #f2f2f2;
+    --muted: #8b8b8b;
+    --wall: rgba(158, 158, 158, 0.85);
+    --room-fill: rgba(255, 255, 255, 0.045);
+    --room-stroke: rgba(255, 255, 255, 0.13);
+    --player: #ffffff;
+    --player-glow: rgba(255, 255, 255, 0.30);
+    --trail: rgba(255, 255, 255, 0.42);
+    --ok: #ffffff;
+    --bad: #ffffff;
+    --warn: #ffffff;
   }
   * { box-sizing: border-box; }
   html, body {
@@ -78,9 +78,20 @@
     background: var(--bad);
     box-shadow: 0 0 6px currentColor;
   }
+  /* In monochrome the three states cannot differ by hue, so they differ by
+     fill: ok = solid white, warn = hollow ring, bad = dim + no glow. Shape and
+     brightness carry what colour used to. */
   .dot.ok { background: var(--ok); color: var(--ok); }
-  .dot.warn { background: var(--warn); color: var(--warn); }
-  .dot.bad { background: var(--bad); color: var(--bad); }
+  .dot.warn {
+    background: transparent;
+    color: var(--warn);
+    box-shadow: inset 0 0 0 2px var(--warn);
+  }
+  .dot.bad {
+    background: var(--muted);
+    color: transparent;
+    box-shadow: none;
+  }
   .muted { color: var(--muted); }
   .title {
     position: fixed;
@@ -124,9 +135,12 @@
   .plan-btn:disabled { opacity: 0.4; cursor: not-allowed; }
   .stub-note {
     margin-top: 8px;
+    padding: 6px 8px;
     font-size: 11px;
     line-height: 1.5;
     color: var(--warn);
+    border-left: 3px solid var(--warn);
+    background: rgba(255, 255, 255, 0.06);
   }
   .stub-note b { font-weight: 600; }
   .job-status {
@@ -144,9 +158,9 @@
     bottom: 14px;
     left: 14px;
     right: 14px;
-    background: rgba(255, 95, 109, 0.12);
-    border: 1px solid rgba(255, 95, 109, 0.35);
-    color: #ffb3ba;
+    background: rgba(255, 255, 255, 0.10);
+    border: 1px solid rgba(255, 255, 255, 0.45);
+    color: #ffffff;
     border-radius: 10px;
     padding: 10px 14px;
     font-size: 13px;
@@ -174,7 +188,7 @@
   }
   .ctrl-row input[type="number"] {
     width: 68px;
-    background: #0d1119;
+    background: #101010;
     border: 1px solid var(--panel-border);
     color: var(--text);
     border-radius: 6px;
@@ -817,10 +831,27 @@
         const [x, y] = toCanvas(trail[i].x, trail[i].y);
         ctx.beginPath();
         ctx.arc(x, y, 2.5 * dpr, 0, Math.PI * 2);
-        ctx.fillStyle = `rgba(57, 240, 192, ${0.35 * alpha})`;
+        ctx.fillStyle = rgbaOf(CSSVar("--player"), 0.35 * alpha);
         ctx.fill();
       }
     }
+
+    // Canvas colours are read from the :root CSS variables rather than repeated
+    // as literals here. The accent used to be hardcoded as rgba(57,240,192,..)
+    // in eight places, which meant a palette change silently missed the canvas.
+    const CSSVar = (() => {
+      const cs = getComputedStyle(document.documentElement);
+      const cache = {};
+      return (name) => (cache[name] ??= cs.getPropertyValue(name).trim());
+    })();
+    const rgbaOf = (cssColor, alpha) => {
+      const m = cssColor.match(/(\d+)[,\s]+(\d+)[,\s]+(\d+)/);
+      if (m) return `rgba(${m[1]}, ${m[2]}, ${m[3]}, ${alpha})`;
+      const h = cssColor.replace("#", "");
+      const n = h.length === 3 ? h.split("").map((c) => c + c).join("") : h;
+      const int = parseInt(n, 16);
+      return `rgba(${(int >> 16) & 255}, ${(int >> 8) & 255}, ${int & 255}, ${alpha})`;
+    };
 
     // Player marker + heading cone.
     if (latest) {
@@ -848,19 +879,19 @@
       ctx.lineTo(baseLX, baseLY);
       ctx.lineTo(baseRX, baseRY);
       ctx.closePath();
-      ctx.fillStyle = "rgba(57, 240, 192, 0.55)";
+      ctx.fillStyle = rgbaOf(CSSVar("--player"), 0.55);
       ctx.fill();
 
       // Glow + dot.
       ctx.beginPath();
       ctx.arc(x, y, 13 * dpr, 0, Math.PI * 2);
-      ctx.fillStyle = "rgba(57, 240, 192, 0.18)";
+      ctx.fillStyle = rgbaOf(CSSVar("--player"), 0.18);
       ctx.fill();
 
       ctx.beginPath();
       ctx.arc(x, y, 6 * dpr, 0, Math.PI * 2);
-      ctx.fillStyle = "#39f0c0";
-      ctx.strokeStyle = "#0b0e14";
+      ctx.fillStyle = CSSVar("--player");
+      ctx.strokeStyle = CSSVar("--bg");
       ctx.lineWidth = 2 * dpr;
       ctx.fill();
       ctx.stroke();
@@ -869,7 +900,7 @@
       const pulse = (performance.now() % 1500) / 1500;          // 0..1
       ctx.beginPath();
       ctx.arc(x, y, (14 + pulse * 22) * dpr, 0, Math.PI * 2);
-      ctx.strokeStyle = `rgba(57, 240, 192, ${0.55 * (1 - pulse)})`;
+      ctx.strokeStyle = rgbaOf(CSSVar("--player"), 0.55 * (1 - pulse));
       ctx.lineWidth = 2.5 * dpr;
       ctx.stroke();
 
@@ -880,11 +911,11 @@
       const tag = "PHONE";
       const coords = `${Math.round(latest.x)}, ${Math.round(latest.y)} px`;
       const wTag = Math.max(ctx.measureText(tag).width, ctx.measureText(coords).width);
-      ctx.fillStyle = "rgba(11, 14, 20, 0.75)";
+      ctx.fillStyle = rgbaOf(CSSVar("--bg"), 0.75);
       ctx.fillRect(labelX - 4 * dpr, labelY - 12 * dpr, wTag + 8 * dpr, 28 * dpr);
-      ctx.fillStyle = "#39f0c0";
+      ctx.fillStyle = CSSVar("--player");
       ctx.fillText(tag, labelX, labelY);
-      ctx.fillStyle = "rgba(230, 237, 243, 0.75)";
+      ctx.fillStyle = rgbaOf(CSSVar("--text"), 0.75);
       ctx.fillText(coords, labelX, labelY + 13 * dpr);
     }
   }
