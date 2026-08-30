@@ -133,6 +133,40 @@ CFG = {
     "ROOM_WALL_GATE_BBOX_MEAN_FRAC": 0.5,
     "ROOM_WALL_GATE_MIN_AREA_FRAC": 0.10,
 
+    # wall-geometry-fixes -- seal-risk instrumentation (see stage_seal_thickness).
+    # The Layer-1 micro-gap seal CLOSEs with a kernel (SEAL_FACTOR * t_med, 39px
+    # on this sample) that is deliberately WIDER than a wall is thick (26px) so it
+    # can bridge a real gap in a single wall -- but the same width can just as
+    # easily weld two separate, nearby walls solid across a thin corridor/closet,
+    # and because room extraction downstream only sees enclosed regions, a welded
+    # corridor doesn't error, it silently stops existing (see planliftar-v1.md:
+    # "if the sealed count jumps implausibly, verify each seal against the
+    # probability map before keeping it"). This has NOT misfired on the samples
+    # run so far -- the gate below is warning-only instrumentation (it logs, it
+    # never changes `mask`), added now so a real misfire is caught with numbers
+    # instead of discovered as a silently-vanished room later.
+    #
+    # Each connected component of (closed_mask & ~mask_before_close) is one
+    # "seal". A legitimate seal bridges a real (if below-hysteresis-threshold)
+    # wall gap, so the wall-probability map should read meaningfully elevated
+    # under it; a seal that welds two separate walls together runs across
+    # genuinely empty floor, so it should read close to background. Exactly one
+    # signal alone is not sufficient, same shape of problem as
+    # ROOM_WALL_GATE_BBOX_MEAN_FRAC/ROOM_WALL_GATE_MIN_AREA_FRAC above: low
+    # probability alone also fires on small, ordinary noise-healing seals (a
+    # few px of below-threshold static in an otherwise-real wall), and area
+    # alone also fires on large seals that legitimately bridge a long but real
+    # gap. A seal is only flagged suspicious when BOTH hold: its own mean
+    # wall_prob is low relative to the image's mean wall_prob (not an absolute
+    # cutoff -- probability maps vary in overall confidence/sparsity from plan
+    # to plan) AND its area is large relative to t_med^2 (a seal's structural
+    # significance scales with wall thickness -- a seal a few wall-thicknesses
+    # across is plausibly a bridged corridor; one a fraction of a wall-thickness
+    # across is ordinary noise-healing, regardless of how low its probability
+    # reads).
+    "SEAL_GATE_PROB_MEAN_FRAC": 0.5,        # seal mean wall_prob < this x image mean wall_prob -> low evidence
+    "SEAL_GATE_AREA_T_MED_SQ_FRAC": 2.0,    # seal area >= this x t_med^2 -> large enough to matter
+
     # Task A -- previously-hardcoded absolute pixel tolerances, now expressed as
     # fractions of t_med (median wall thickness in px, see stage_seal_thickness)
     # so behaviour doesn't drift with image resolution. Each fraction is chosen
@@ -177,6 +211,18 @@ CFG = {
     "WALL_SNAP_ANGLE_DEG": 10.0,                  # axis-snap angle tolerance, degrees
     "WALL_COLLINEAR_T_MED_FRAC": 13.0 / 26.0,     # perpendicular distance for collinearity -> 13.0px at t_med=26
     "WALL_MERGE_GAP_T_MED_FRAC": 19.5 / 26.0,     # endpoint-gap tolerance for merging collinear runs -> 19.5px at t_med=26
+    # Endpoint-adjacency tolerance for the ADVISORY loose-endpoint warning. Was a
+    # hardcoded 6.0px default arg on wall_endpoint_degrees() - the same absolute-px
+    # bug class as Task A, missed there because it sat in a helper signature.
+    #
+    # Set to 1.0 * t_med rather than the old 6.0px (0.23 * t_med) on physical
+    # grounds, not to silence the warning: walls are EXTRUDED AS BOXES one t_med
+    # thick, so two endpoints within a wall thickness of each other produce
+    # overlapping boxes and no hole. The old 6px asked whether centreline points
+    # were nearly coincident; the question that matters for AR is whether the
+    # extruded solids fail to meet. A gap wider than a full wall thickness is a
+    # real hole and still warns.
+    "WALL_ENDPOINT_TOL_T_MED_FRAC": 1.0,   # -> 26.0px at t_med=26
     "WALL_STUB_LEN_T_MED_FRAC": 26.0 / 26.0,      # min surviving segment length -> 26.0px at t_med=26
 }
 
@@ -282,8 +328,14 @@ def _point_seg_dist(p, a, b):
     return float(np.linalg.norm(p - proj))
 
 
-def wall_endpoint_degrees(walls, tol=6.0):
-    """For each wall's start/end, count other walls (by endpoint or segment-body proximity) within tol px."""
+def wall_endpoint_degrees(walls, tol):
+    """For each wall's start/end, count other walls (by endpoint or segment-body proximity) within tol px.
+
+    `tol` is required rather than defaulted: it was a hardcoded 6.0px, the same
+    absolute-pixel bug class the rest of this branch removed, and it is easy to
+    miss here because it sits in a helper's signature rather than in a stage.
+    Callers pass WALL_ENDPOINT_TOL_T_MED_FRAC * t_med.
+    """
     n = len(walls)
     pts = [(np.array([w["start"]["x"], w["start"]["y"]], dtype=np.float64),
             np.array([w["end"]["x"], w["end"]["y"]], dtype=np.float64)) for w in walls]
@@ -628,17 +680,64 @@ def stage_hysteresis(lines, prob_full, cfg):
     return mask, {"naive_components": naive_n, "hysteresis_components": hyst_n}
 
 
-def stage_seal_thickness(lines, mask, cfg):
-    """Cell 4 (notebook cell index 6) -- Layer 1 wall thickness + micro-gap seal."""
+def stage_seal_thickness(lines, mask, cfg, prob):
+    """Cell 4 (notebook cell index 6) -- Layer 1 wall thickness + micro-gap seal.
+
+    `prob` is the wall-probability map (float32, same H x W as `mask`) -- threaded
+    through explicitly (same pattern as stage_regions_and_walls's `prob_full`) so
+    the seal-risk instrumentation below can score each seal the CLOSE produced
+    against real wall evidence. WARNING-ONLY: this block only measures and logs;
+    it never touches `mask`, so the returned mask/dist/t_med/seal_kernel are
+    bit-identical to before this instrumentation was added. See
+    CFG["SEAL_GATE_PROB_MEAN_FRAC"]/CFG["SEAL_GATE_AREA_T_MED_SQ_FRAC"] for the
+    gate's design rationale.
+    """
     dist = cv2.distanceTransform(mask, cv2.DIST_L2, 5)
     skel = skeletonize(mask.astype(bool))
     t_med = 2 * float(np.median(dist[skel]))
     seal_below = cfg["SEAL_FACTOR"] * t_med
     k = int(seal_below) | 1
+    comps_before = cv2.connectedComponents(mask)[0] - 1
+    mask_before_close = mask.astype(bool)
     mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_RECT, (k, k)))
     comps_after = cv2.connectedComponents(mask)[0] - 1
     log(lines, f"t_med = {t_med:.1f}px  seal kernel = {k}px  components after close = {comps_after}")
-    return mask, dist, {"t_med": t_med, "seal_kernel": k, "components_after_close": comps_after}
+
+    # --- seal-risk instrumentation (warning-only, see CFG comment above) ---
+    added = mask.astype(bool) & ~mask_before_close
+    n_seals_raw, seal_labels = cv2.connectedComponents(added.astype(np.uint8))
+    n_seals = n_seals_raw - 1  # drop background label 0
+    img_mean_prob = float(prob.mean())
+    prob_gate_frac = cfg["SEAL_GATE_PROB_MEAN_FRAC"]
+    area_gate_px = cfg["SEAL_GATE_AREA_T_MED_SQ_FRAC"] * (t_med ** 2)
+
+    seal_stats = []
+    total_seal_area = 0
+    for lab in range(1, n_seals_raw):
+        seal_px = seal_labels == lab
+        area = int(seal_px.sum())
+        total_seal_area += area
+        seal_mean_prob = float(prob[seal_px].mean()) if area else 0.0
+        ratio = (seal_mean_prob / img_mean_prob) if img_mean_prob else 0.0
+        suspicious = (ratio < prob_gate_frac) and (area >= area_gate_px)
+        seal_stats.append({"label": int(lab), "area_px": area, "mean_prob": seal_mean_prob,
+                            "prob_ratio": ratio, "suspicious": bool(suspicious)})
+
+    flagged = [s for s in seal_stats if s["suspicious"]]
+    log(lines, f"seal-risk: components before close = {comps_before}  after close = {comps_after}  "
+                f"-- {n_seals} seal(s) added, {total_seal_area}px^2 total sealed area, "
+                f"{len(flagged)} flagged suspicious "
+                f"(prob_ratio < {prob_gate_frac:.2f}x image mean wall_prob ({img_mean_prob:.4f}) "
+                f"AND area >= {area_gate_px:.0f}px^2 = {cfg['SEAL_GATE_AREA_T_MED_SQ_FRAC']:.2f} * t_med^2)")
+    for s in flagged:
+        log(lines, f"  SUSPICIOUS seal label {s['label']}: area={s['area_px']}px^2  "
+                    f"mean_prob={s['mean_prob']:.4f} = {s['prob_ratio']:.3f}x image mean -- "
+                    f"possible welded corridor/closet, verify against the probability map before trusting this seal")
+
+    return mask, dist, {"t_med": t_med, "seal_kernel": k, "components_after_close": comps_after,
+                         "seal_components_before_close": comps_before,
+                         "n_seals": n_seals, "seal_area_total_px": total_seal_area,
+                         "n_seals_suspicious": len(flagged), "seal_stats": seal_stats}
 
 
 def stage_cubicasa_seal(lines, mask, sg, rf, t_med, cx0, cy0, H, W, cfg=None):
@@ -1187,7 +1286,7 @@ def stage_consensus(lines, labels, room_ids, rooms, walls, cubicasa_rooms, cx0, 
         "room_count_sane": 1 <= len(rooms) <= 40,
         "has_rooms": len(rooms) > 0,
     }
-    degs = wall_endpoint_degrees(walls)
+    degs = wall_endpoint_degrees(walls, cfg["WALL_ENDPOINT_TOL_T_MED_FRAC"] * cfg["_t_med"])
     n_loose = sum((d[0] < 1) + (d[1] < 1) for d in degs.values())
     inv["loose_endpoints_warn"] = n_loose
     log(lines, f"invariants: {inv}")
@@ -1634,7 +1733,7 @@ def main():
     log(lines, f"prob map: {prob_full.shape} offset ({cx0}, {cy0})")
 
     mask, m1 = stage_hysteresis(lines, prob_full, cfg)
-    mask, dist, m2 = stage_seal_thickness(lines, mask, cfg)
+    mask, dist, m2 = stage_seal_thickness(lines, mask, cfg, prob_full)
     cfg["_t_med"] = m2["t_med"]
     seal_mask, cubicasa_rooms, fixtures, m3 = stage_cubicasa_seal(lines, mask, sg, rf, m2["t_med"], cx0, cy0, H, W, cfg=cfg)
     region_ctx = stage_regions_and_walls(lines, seal_mask, dist, cfg, prob_full)

@@ -4,6 +4,7 @@ geometry: <repo>\out-cubicasa\sample_geometry.json
 prob map: (2048, 2730) offset (0, 0)
 components: naive@0.5 = 6  ->  hysteresis = 6   (healing metric; ideal ~1)
 t_med = 26.0px  seal kernel = 39px  components after close = 6
+seal-risk: components before close = 6  after close = 6  -- 22 seal(s) added, 2592px^2 total sealed area, 0 flagged suspicious (prob_ratio < 0.50x image mean wall_prob (0.0774) AND area >= 1352px^2 = 2.00 * t_med^2)
 seal layer: 182822 CubiCasa wall px + 16 opening bars (labeling copy only)
 wall-prob gate: rejected 1 label(s) with bbox_mean < 0.50x image mean (0.0774) AND area >= 0.10x image area (5591040px): label 2 (bbox_mean=0.0030 = 0.039x image mean, area=0.186x image area)
 labels: 19  exterior: 1  rooms: 13
@@ -25,7 +26,7 @@ cubicasa room room_010_6 (room, 26010px^2): NO overlap with any counted room - 2
 cubicasa room room_010_9 (room, 4218px^2): NO overlap with any counted room - 4056px (96%) lies in wall/background
 consensus: 1 matches / max(13 mitunet, 8 cubicasa) = 0.08
 consensus_graded: area-weighted score over 11 cubicasa room(s) = 0.343  [room_002_0(kitchen)=0.448[85580px^2 -> mitunet 12]; room_002_3(kitchen)=0.025[28863px^2 -> mitunet 12]; room_003_0(living_room)=0.289[216881px^2 -> mitunet 6]; room_003_1(living_room)=0.000[5860px^2 -> mitunet 0]; room_004_0(bedroom)=0.748[135653px^2 -> mitunet 7]; room_005_0(bathroom)=0.363[33400px^2 -> mitunet 10]; room_005_4(bathroom)=0.345[12576px^2 -> mitunet 18]; room_010_0(room)=0.372[49217px^2 -> mitunet 3]; room_010_1(room)=0.189[210827px^2 -> mitunet 12]; room_010_6(room)=0.000[26010px^2 -> mitunet 0]; room_010_9(room)=0.000[4218px^2 -> mitunet 0]]
-invariants: {'all_polygons_closed': True, 'min_area_ok': True, 'room_count_sane': True, 'has_rooms': True, 'loose_endpoints_warn': 6}
+invariants: {'all_polygons_closed': True, 'min_area_ok': True, 'room_count_sane': True, 'has_rooms': True, 'loose_endpoints_warn': 0}
 routing: hard_fail=False  merged_rooms_note=True  needs_repair=False
 watershed seed gate: no seeds below min_room_area=2000px^2 (every cubi_pairs_final entry already survived stage_consensus's Job 1)
 virtual split: 13 regions -> 13 sub-rooms; consensus_legacy 0.08 -> 0.08  consensus_graded 0.343 -> 0.343
@@ -44,7 +45,7 @@ virtual split: 13 regions -> 13 sub-rooms; consensus_legacy 0.08 -> 0.08  consen
     "consensus_legacy_final": 0.077,
     "matches": 1,
     "wall_thickness_px": 26.0,
-    "loose_endpoints": 6,
+    "loose_endpoints": 0,
     "crop_offset": [
       0,
       0

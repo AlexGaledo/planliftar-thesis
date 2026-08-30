@@ -112,7 +112,7 @@ def run_pipeline_at_scale(scale):
     lines = []
 
     mask, _m1 = stage_hysteresis(lines, prob, cfg)
-    sealed, dist, m2 = stage_seal_thickness(lines, mask, cfg)
+    sealed, dist, m2 = stage_seal_thickness(lines, mask, cfg, prob)
     t_med = m2["t_med"]
     cfg["_t_med"] = t_med  # stage_regions_and_walls reads this, same as main()
 
