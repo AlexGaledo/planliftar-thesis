@@ -777,6 +777,11 @@ function normalizePlan(data) {
   return data;
 }
 
+// PORT of deliverables/plan_ops.py close_wall_gaps(). Python is the
+// reference implementation - the GLB builder calls it - and this copy
+// exists only because the browser fetches plan JSON directly and cannot
+// import Python. local/test_plan_ops_parity.py fails if the two drift.
+//
 // Newri's detector emits walls as independent line segments, so corners and
 // jogs arrive as DISCONNECTED sticks: a wall runs down x=645.4, stops at
 // y=340, and the next one starts at x=607,y=373 - in 3D that reads as the

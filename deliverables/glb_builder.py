@@ -4,6 +4,8 @@
 import numpy as np
 import trimesh
 
+from plan_ops import prepare_plan
+
 
 def _px_to_m(value, pixels_per_meter):
     """Convert a px measurement to meters given a pixels_per_meter scale factor."""
@@ -55,16 +57,22 @@ def _wall_box(start_xy_m, end_xy_m, thickness_m, height_m, name):
 
 
 def build_glb(geometry: dict, pixels_per_meter: float, wall_height_m: float = 2.5,
-              out_path: str = "/kaggle/working/planlift.glb"):
+              out_path: str = "/kaggle/working/planlift.glb", close_gaps: bool = True):
     """Build a GLB from exported floorplan geometry: one box mesh per wall plus a floor slab.
 
-    geometry["walls"] entries look like:
-        {"id": ..., "start": {"x", "y"}, "end": {"x", "y"}, "thickness": <m>, "height": <m>}
-    "start"/"end" are in px and are converted to meters via pixels_per_meter.
-    "thickness" (and any per-wall "height") in the sample schema are already in
-    meters, so they are used as-is, with wall_height_m as the fallback height
-    when a wall has no "height" field.
+    The geometry is run through plan_ops.prepare_plan() first, so ANY of the
+    project's three plan schemas is accepted and dangling walls are welded shut
+    before extrusion. That closure is what stops a line-first detector's output
+    from rendering as walls that teleport sideways at every corner; pass
+    close_gaps=False to extrude the raw segments for comparison.
+
+    After prepare_plan, walls[i] looks like:
+        {"start": {"x", "y"}, "end": {"x", "y"}, "thickness": <px>, "height": <m>}
+    "start"/"end" and "thickness" are all in plan px and are converted to
+    meters via pixels_per_meter; "height" is already real-world meters, with
+    wall_height_m as the fallback when a wall has no "height" field.
     """
+    geometry = prepare_plan(geometry, close_gaps=close_gaps)
     walls = geometry.get("walls", [])
 
     wall_meshes = []
@@ -78,7 +86,9 @@ def build_glb(geometry: dict, pixels_per_meter: float, wall_height_m: float = 2.
             _px_to_m(wall["end"]["x"], pixels_per_meter),
             _px_to_m(wall["end"]["y"], pixels_per_meter),
         )
-        thickness_m = float(wall.get("thickness", 0.1))
+        # px, not metres: prepare_plan() has already converted any
+        # metre-stated thickness using the file's own pixel_to_meter_ratio.
+        thickness_m = _px_to_m(wall.get("thickness", 10.0), pixels_per_meter)
         height_m = float(wall.get("height", wall_height_m))
         name = f"w{i}"
 
