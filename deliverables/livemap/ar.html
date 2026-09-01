@@ -411,6 +411,7 @@
     </div>
   </div>
 
+<script src="plan_ops.js"></script>
 <script type="importmap">
 {
   "imports": {
@@ -740,167 +741,17 @@ function planUrl() {
   return `plans/${safe}.json`;
 }
 
-// Kept in step with index.html's normalizePlan(). Three schemas exist across
-// this project's own files and the wall builder below assumes exactly one of
-// them - {x, y} endpoints and a thickness in PLAN PIXELS, which it divides by
-// ppm to get metres:
-//
-//   schema 1.0  "start": [x, y]   + thickness_px            (mitunet_geometry.json)
-//   forked      "start": {x, y}   + thickness in METRES     (sample_response.json)
-//   schema 2.0  "start": {x, y}   + thickness in px         (our export)
-//
-// Without this, the forked schema's 0.10-0.32 m thicknesses are read as pixels,
-// divided by ppm again, and collapse to the 0.02 m floor - walls render about
-// 5x too thin. Metres are converted using the file's OWN stated ratio
-// (metadata.pixel_to_meter_ratio), which is exact: every wall in
-// sample_response.json equals mitunet_geometry.json's thickness_px when divided
-// by it. A file with no stated ratio is left alone rather than guessed at.
-function normalizePlan(data) {
-  if (!data || typeof data !== "object" || !Array.isArray(data.walls)) return data;
-  const ratio = Number(data && data.metadata && data.metadata.pixel_to_meter_ratio) || 0;
-  const pt = (v) => (Array.isArray(v) && v.length >= 2 ? { x: v[0], y: v[1] } : v);
-  data.walls = data.walls.map((w) => {
-    if (!w || typeof w !== "object") return w;
-    const out = { ...w, start: pt(w.start), end: pt(w.end) };
-    if (typeof out.thickness !== "number" && typeof w.thickness_px === "number") {
-      out.thickness = w.thickness_px;
-    } else if (typeof out.thickness === "number" && ratio > 0) {
-      out.thickness = out.thickness / ratio;
-    }
-    return out;
-  });
-  if (Array.isArray(data.rooms)) {
-    data.rooms = data.rooms.map((r) => (r && Array.isArray(r.polygon)
-      ? { ...r, polygon: r.polygon.map(pt) }
-      : r));
-  }
-  return data;
-}
-
-// PORT of deliverables/plan_ops.py close_wall_gaps(). Python is the
-// reference implementation - the GLB builder calls it - and this copy
-// exists only because the browser fetches plan JSON directly and cannot
-// import Python. local/test_plan_ops_parity.py fails if the two drift.
-//
-// Newri's detector emits walls as independent line segments, so corners and
-// jogs arrive as DISCONNECTED sticks: a wall runs down x=645.4, stops at
-// y=340, and the next one starts at x=607,y=373 - in 3D that reads as the
-// wall teleporting sideways and back. 12 of its 18 endpoints (67%) sit
-// further than one wall thickness from any other wall.
-//
-// closeWallGaps() walks every dangling endpoint, finds the nearest point on
-// another wall, and inserts axis-aligned connector segments. Three rules keep
-// it from inventing geometry:
-//
-//   junction   gap <= 3 x median thickness -> fill. A corner, jog or
-//              T-junction the detector clipped; the geometry implies it.
-//   doorway    a DOOR fixture lies on the gap -> leave open. That hole is a
-//              real opening, not a miss, and you must be able to walk it.
-//   span       gap > that -> fill only if a WINDOW fixture sits on the line.
-//              A window cannot float in mid-air, so the plan's own fixtures
-//              are evidence a wall belongs there. No evidence, no wall.
-//
-// On newri-reference this closes 8 segments (including the 6 m top exterior
-// wall the two windows prove) and leaves the 3 doorways open. Runs on plan
-// PIXELS, after normalizePlan() has converted any metre thicknesses.
-function closeWallGaps(data) {
-  const walls = (data && data.walls) || [];
-  if (walls.length < 2) return data;
-
-  const seg = walls.map((w) => ({
-    id: w.id, s: [w.start.x, w.start.y], e: [w.end.x, w.end.y],
-    t: Number(w.thickness) || 4, h: Number(w.height) || 2.7, src: w,
-  }));
-  const ts = seg.map((w) => w.t).sort((a, b) => a - b);
-  const tMed = ts[ts.length >> 1] || 4;
-  const SNAP = 0.5 * tMed;      // endpoints this close are already the same node
-  const JOIN = 3.0 * tMed;      // corner / jog / T-junction closure range
-  const ONLINE = 1.0 * tMed;    // a fixture this close counts as "on" the line
-
-  const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
-  function nearest(p, a, b) {   // closest point on segment ab to p
-    const dx = b[0] - a[0], dy = b[1] - a[1], L2 = dx * dx + dy * dy;
-    if (L2 === 0) return { q: a, d: dist(p, a) };
-    const t = Math.max(0, Math.min(1, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / L2));
-    const q = [a[0] + t * dx, a[1] + t * dy];
-    return { q, d: dist(p, q) };
-  }
-  const fixturesOn = (p, q, kind) => (data.fixtures || []).filter(
-    (f) => f && f.type === kind && f.position &&
-      nearest([f.position.x, f.position.y], p, q).d <= ONLINE
-  ).map((f) => f.id);
-
-  const done = new Set();
-  function bestGap() {
-    let best = null;
-    for (let i = 0; i < seg.length; i++) {
-      for (const key of ["s", "e"]) {
-        const A = seg[i], p = A[key];
-        if (done.has(A.id + key)) continue;
-        if (seg.some((B, j) => j !== i && nearest(p, B.s, B.e).d <= SNAP)) continue;
-        for (let j = 0; j < seg.length; j++) {
-          const B = seg[j];
-          if (j === i) continue;
-          // already share a node: joining again would just overlay wall A
-          if (Math.min(dist(A.s, B.s), dist(A.s, B.e),
-                       dist(A.e, B.s), dist(A.e, B.e)) <= SNAP) continue;
-          let { q, d } = nearest(p, B.s, B.e);
-          for (const ep of [B.s, B.e]) {   // a target near B's own end IS that corner
-            if (dist(q, ep) <= JOIN) { q = ep; d = dist(p, ep); break; }
-          }
-          if (!best || d < best.d) best = { d, i, key, j, q };
-        }
-      }
-    }
-    return best;
-  }
-
-  const added = [], skipped = [];
-  for (let guard = 0; guard < 4 * seg.length; guard++) {
-    const g = bestGap();
-    if (!g) break;
-    const A = seg[g.i], B = seg[g.j], p = A[g.key], q = g.q;
-    done.add(A.id + g.key);
-
-    // The connector turns one corner. Reject the corner whose first leg runs
-    // back along A over itself, keeping the leg that leaves A's far end.
-    const far = g.key === "s" ? A.e : A.s;
-    const opts = [[p[0], q[1]], [q[0], p[1]]]
-      .filter((c) => dist(far, c) >= dist(far, p) - 1e-6);
-    const doors = fixturesOn(p, q, "door");
-    const wins = fixturesOn(p, q, "window");
-    let why = null;
-    if (!opts.length) why = "corner backtracks";
-    else if (doors.length) why = "doorway " + doors.join(",");
-    else if (g.d > JOIN && !wins.length) why = "no fixture evidence";
-    if (why) { skipped.push(`${A.id}.${g.key}->${B.id} ${g.d.toFixed(1)}px: ${why}`); continue; }
-
-    const c = opts.reduce((m, x) =>
-      dist(p, x) + dist(x, q) < dist(p, m) + dist(m, q) ? x : m);
-    const t = Math.min(A.t, B.t);
-    for (const [a, b] of [[p, c], [c, q]]) {
-      if (dist(a, b) <= SNAP) continue;
-      const w = { id: `fill_${String(added.length + 1).padStart(3, "0")}`,
-                  start: { x: a[0], y: a[1] }, end: { x: b[0], y: b[1] },
-                  thickness: t, height: A.h, generated: true,
-                  reason: g.d <= JOIN ? "junction" : "span/fixture" };
-      seg.push({ id: w.id, s: a, e: b, t, h: w.height, src: w });
-      walls.push(w);
-      added.push(`${w.id} ${A.id}->${B.id} ${dist(a, b).toFixed(1)}px [${w.reason}]`);
-    }
-  }
-  console.info(`[ar] closeWallGaps: +${added.length} connectors, ${skipped.length} left open`,
-               { added, skipped, tMed, JOIN });
-  data.gapFill = { added: added.length, skipped };
-  return data;
-}
+// normalizePlan() and closeWallGaps() live in plan_ops.js, loaded as a
+// classic script above so index.html (classic) and this module can share
+// one copy. deliverables/plan_ops.py is the reference implementation and
+// local/test_plan_ops_parity.py fails if the two drift.
 
 async function loadFloorplan() {
   const res = await fetch(planUrl(), { cache: "no-store" });
   if (!res.ok) throw new Error("HTTP " + res.status);
   // ?gaps=off renders newri's raw disconnected segments, for comparison.
-  const raw = normalizePlan(await res.json());
-  const data = params.get("gaps") === "off" ? raw : closeWallGaps(raw);
+  const data = PlanOps.preparePlan(await res.json(),
+                                   { closeGaps: params.get("gaps") !== "off" });
   planData = data;
   planBoundsPx = computeFootprintBounds(data);
   planOffsetPx = { x: (planBoundsPx.minX + planBoundsPx.maxX) / 2,

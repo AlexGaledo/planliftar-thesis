@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Assert the JavaScript gap-closure in ar.html matches deliverables/plan_ops.py.
+"""Assert livemap/plan_ops.js matches deliverables/plan_ops.py.
 
-The browser fetches plan JSON directly and cannot import Python, so the WebXR
-view carries a hand-kept port of normalize_plan/close_wall_gaps. Two copies of
-a geometry algorithm drift silently: the AR view would quietly stop agreeing
+The browser fetches plan JSON directly and cannot import Python, so the two
+livemap pages share a hand-kept JavaScript port. Two copies of a geometry
+algorithm drift silently: the map and the AR view would quietly stop agreeing
 with the GLB you hand people, and nothing would fail. This test makes that
 drift loud.
 
@@ -25,30 +25,19 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "deliverables"))
 from plan_ops import prepare_plan  # noqa: E402
 
-AR_HTML = os.path.join(ROOT, "deliverables", "livemap", "ar.html")
+PLAN_OPS_JS = os.path.join(ROOT, "deliverables", "livemap", "plan_ops.js")
 PLANS_DIR = os.path.join(ROOT, "deliverables", "livemap", "plans")
 
-# Pulls the two functions out of ar.html's <script type="module"> block by name
-# and runs them on one plan file, emitting the same summary the Python side
-# builds. ar.html is CRLF, but the "\nfunction " terminator still matches
-# inside a CRLF pair, so no line-ending normalisation is needed.
+# Evaluates plan_ops.js (a classic script that assigns window.PlanOps, falling
+# back to globalThis where there is no window) and runs it over one plan file,
+# emitting the same summary the Python side builds.
 NODE_HARNESS = r"""
 const fs = require("fs");
-// argv: [node, harness.js, ar.html, plan.json]
-const html = fs.readFileSync(process.argv[2], "utf8");
-function grab(name) {
-  const i = html.indexOf("function " + name + "(");
-  if (i < 0) throw new Error("not found in ar.html: " + name);
-  const j = html.indexOf("\nfunction ", i + 1);
-  return html.slice(i, j > 0 ? j : html.length);
-}
-const api = new Function(
-  grab("normalizePlan") + "\n" + grab("closeWallGaps") +
-  "; return { normalizePlan, closeWallGaps };"
-)();
+// argv: [node, harness.js, plan_ops.js, plan.json]
+new Function(fs.readFileSync(process.argv[2], "utf8"))();
 console.info = () => {};   // the browser-facing log is noise here
 const plan = JSON.parse(fs.readFileSync(process.argv[3], "utf8"));
-const out = api.closeWallGaps(api.normalizePlan(plan));
+const out = PlanOps.preparePlan(plan);
 process.stdout.write(JSON.stringify({
   walls: out.walls.length,
   generated: (out.walls || []).filter((w) => w.generated).map((w) => [
@@ -60,9 +49,7 @@ process.stdout.write(JSON.stringify({
 """
 
 
-def python_side(path):
-    with open(path, encoding="utf-8") as fh:
-        data = prepare_plan(json.load(fh), verbose=False)
+def summarise(data):
     return {
         "walls": len(data["walls"]),
         "generated": [[w["id"], round(w["start"]["x"], 4), round(w["start"]["y"], 4),
@@ -73,8 +60,26 @@ def python_side(path):
     }
 
 
+def python_side(path):
+    with open(path, encoding="utf-8") as fh:
+        return summarise(prepare_plan(json.load(fh), verbose=False))
+
+
+def python_twice(path):
+    """prepare_plan must be idempotent.
+
+    The metre->px division in normalize_plan is destructive, so a second pass
+    over an already converted plan turned a 0.10 m wall into 1000 px. The
+    livemap upload path called it twice (once to validate, once inside
+    applyPlan) and hit exactly that.
+    """
+    with open(path, encoding="utf-8") as fh:
+        data = json.load(fh)
+    return summarise(prepare_plan(prepare_plan(data, verbose=False), verbose=False))
+
+
 def js_side(path, harness):
-    out = subprocess.run(["node", harness, AR_HTML, path],
+    out = subprocess.run(["node", harness, PLAN_OPS_JS, path],
                          capture_output=True, text=True)
     if out.returncode != 0:
         raise RuntimeError("node failed: " + out.stderr.strip())
@@ -99,8 +104,8 @@ def main():
 
         for name in plans:
             path = os.path.join(PLANS_DIR, name)
-            py, js = python_side(path), js_side(path, harness)
-            if py == js:
+            py, js, twice = python_side(path), js_side(path, harness), python_twice(path)
+            if py == js and py == twice:
                 print("PASS %-28s %3d walls, %d generated, %d left open"
                       % (name, py["walls"], len(py["generated"]), len(py["skipped"])))
                 continue
@@ -108,10 +113,20 @@ def main():
             print("FAIL %s" % name)
             for key in ("walls", "generated", "skipped"):
                 if py[key] != js[key]:
-                    print("  %s:\n    py: %r\n    js: %r" % (key, py[key], js[key]))
+                    print("  %s (py vs js):\n    py: %r\n    js: %r" % (key, py[key], js[key]))
+                if py[key] != twice[key]:
+                    print("  %s (not idempotent):\n    once:  %r\n    twice: %r"
+                          % (key, py[key], twice[key]))
 
     print("\n%d/%d plans in parity" % (len(plans) - failures, len(plans)))
-    return 1 if failures else 0
+
+    # The Kaggle cell is the third copy of this code and the one nobody looks
+    # at, so check it here rather than leaving it to rot again.
+    gen = subprocess.run([sys.executable,
+                          os.path.join(ROOT, "deliverables", "make_notebook_cell.py"),
+                          "--check"], capture_output=True, text=True)
+    print(gen.stdout.strip() or gen.stderr.strip())
+    return 1 if (failures or gen.returncode) else 0
 
 
 if __name__ == "__main__":

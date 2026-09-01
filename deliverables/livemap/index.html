@@ -312,6 +312,7 @@
 
   <div class="err" id="errBox"></div>
 
+<script src="plan_ops.js"></script>
 <script>
 (function () {
   "use strict";
@@ -634,8 +635,10 @@
   // showing).
   function applyPlan(data, label, isBuiltin) {
     // Idempotent: also covers the ?plan= fetch and the job-stub result, so no
-    // render path can receive un-normalised coordinates.
-    plan = normalizePlan(data);
+    // render path can receive un-normalised coordinates. Gap closure runs
+    // here too, so the 2D map draws the same walls the GLB extrudes instead
+    // of disagreeing with a model built from the very same file.
+    plan = PlanOps.preparePlan(data);
     // A different plan has a different coordinate extent (see the
     // mismatch-note in the UI), so any trail/dot collected against the
     // PREVIOUS plan would be meaningless on this one - possibly even
@@ -647,7 +650,9 @@
 
     const wallCount = (plan.walls || []).length;
     const roomCount = (plan.rooms || []).length;
-    planInfoEl.textContent = `${label} — ${wallCount} walls, ${roomCount} rooms`;
+    const filled = (plan.walls || []).filter((w) => w.generated).length;
+    planInfoEl.textContent = `${label} — ${wallCount} walls, ${roomCount} rooms`
+      + (filled ? ` (+${filled} gap fills)` : "");
     backToBuiltinBtn.disabled = !!isBuiltin;
 
     computeTransform();
@@ -679,48 +684,10 @@
   // canvas, so a bad file leaves whatever was on screen alone rather than
   // blanking it.
   // ---------------------------------------------------------------------
-  // Three coordinate conventions exist across this project's own files, so the
-  // loader normalises rather than rejecting two of them:
-  //
-  //   schema 1.0  "start": [x, y]      + thickness_px   (mitunet_geometry.json,
-  //                                                      out-cubicasa/sample_geometry.json
-  //                                                      - the pipeline itself reads this
-  //                                                      form via np.array(w["start"]))
-  //   forked      "start": {x, y}      + thickness      (thickness in METRES)
-  //   schema 2.0  "start": {x, y}      + thickness      (thickness in px - our export)
-  //
-  // Everything downstream expects {x, y} objects and a px thickness, so convert
-  // once here. Where a file states its own conversion (metadata.pixel_to_meter_ratio)
-  // metre thicknesses are converted with it. That is verified exact against this
-  // project's own pair: every wall in sample_response.json (metres) equals
-  // mitunet_geometry.json's thickness_px when divided by that ratio of 0.01.
-  // Without a stated ratio the value is left alone and simply draws thin -
-  // guessing a scale would invent geometry, and note the OTHER scale field,
-  // scale.pixels_per_meter, is marked "assumed_default" with confidence 0.0.
-  function normalizePlan(data) {
-    if (!data || typeof data !== "object" || !Array.isArray(data.walls)) return data;
-    // Present only on the forked schema, which states thickness in metres.
-    const ratio = Number(data && data.metadata && data.metadata.pixel_to_meter_ratio) || 0;
-    const pt = (v) => (Array.isArray(v) && v.length >= 2
-      ? { x: v[0], y: v[1] }
-      : v);
-    data.walls = data.walls.map((w) => {
-      if (!w || typeof w !== "object") return w;
-      const out = { ...w, start: pt(w.start), end: pt(w.end) };
-      if (typeof out.thickness !== "number" && typeof w.thickness_px === "number") {
-        out.thickness = w.thickness_px;
-      } else if (typeof out.thickness === "number" && ratio > 0) {
-        out.thickness = out.thickness / ratio;
-      }
-      return out;
-    });
-    if (Array.isArray(data.rooms)) {
-      data.rooms = data.rooms.map((r) => (r && Array.isArray(r.polygon)
-        ? { ...r, polygon: r.polygon.map(pt) }
-        : r));
-    }
-    return data;
-  }
+  // normalizePlan() and closeWallGaps() live in plan_ops.js, loaded as a
+  // classic script above so this page and ar.html (a module) share one copy.
+  // deliverables/plan_ops.py is the reference implementation - the GLB
+  // builder calls it - and local/test_plan_ops_parity.py fails if they drift.
 
   function validatePlan(data) {
     if (data === null || typeof data !== "object" || Array.isArray(data)) {
@@ -758,7 +725,7 @@
       }
       // Normalise coordinate form BEFORE validating, so a schema-1.0 plan with
       // [x, y] arrays is accepted rather than rejected for lacking start.x.
-      data = normalizePlan(data);
+      data = PlanOps.normalizePlan(data);
       const problem = validatePlan(data);
       if (problem) {
         showError(`"${file.name}" is not a usable plan: ${problem}`);

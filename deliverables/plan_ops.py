@@ -46,8 +46,16 @@ def normalize_plan(data: dict) -> dict:
     sample_response.json equals mitunet_geometry.json's thickness_px when
     divided by it. A file that states no ratio is left alone rather than
     guessed at - inventing a scale would invent geometry.
+
+    Idempotent, via the "_plan_ops_normalized" marker. It has to be: the
+    metre->px division is destructive, so a second pass over an already
+    converted plan turns a 0.10 m wall into 1000 px instead of 10. The upload
+    path in index.html normalises once to validate and once more inside
+    applyPlan, and hit exactly that.
     """
     if not isinstance(data, dict) or not isinstance(data.get("walls"), list):
+        return data
+    if data.get("_plan_ops_normalized"):
         return data
 
     raw_ratio = (data.get("metadata") or {}).get("pixel_to_meter_ratio")
@@ -81,6 +89,7 @@ def normalize_plan(data: dict) -> dict:
             if isinstance(r, dict) and isinstance(r.get("polygon"), list) else r
             for r in data["rooms"]
         ]
+    data["_plan_ops_normalized"] = True
     return data
 
 
@@ -140,6 +149,8 @@ def close_wall_gaps(data: dict, *, enabled: bool = True) -> dict:
     upstream plans rather than a fix for our own.
     """
     walls = data.get("walls") or []
+    if any(isinstance(w, dict) and w.get("generated") for w in walls):
+        return data          # already closed; re-running would duplicate fill ids
     data["gap_fill"] = {"added": [], "skipped": [], "enabled": enabled}
     if not enabled or len(walls) < 2:
         return data
