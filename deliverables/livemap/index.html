@@ -696,13 +696,22 @@
     if (!Array.isArray(data.walls)) {
       return "missing a \"walls\" array";
     }
+    // PlanOps.MAX_WALLS_FOR_CLOSURE is the point past which gap closure
+    // refuses to run; rejecting here instead tells the user why rather than
+    // silently drawing a plan whose walls were never joined.
+    if (data.walls.length > PlanOps.MAX_WALLS_FOR_CLOSURE) {
+      return `${data.walls.length} walls exceeds the ${PlanOps.MAX_WALLS_FOR_CLOSURE} limit`;
+    }
     for (let i = 0; i < data.walls.length; i++) {
       const w = data.walls[i];
+      // Number.isFinite, not typeof === "number": JSON has no NaN literal but
+      // 1e400 parses to Infinity, which is a number and would sail through -
+      // then poison every distance comparison downstream.
       const hasNums = w && w.start && w.end
-        && typeof w.start.x === "number" && typeof w.start.y === "number"
-        && typeof w.end.x === "number" && typeof w.end.y === "number";
+        && Number.isFinite(w.start.x) && Number.isFinite(w.start.y)
+        && Number.isFinite(w.end.x) && Number.isFinite(w.end.y);
       if (!hasNums) {
-        return `walls[${i}] needs numeric start.x/start.y/end.x/end.y`;
+        return `walls[${i}] needs finite numeric start.x/start.y/end.x/end.y`;
       }
     }
     // Rooms are optional - a plan can be walls-only - but if present must

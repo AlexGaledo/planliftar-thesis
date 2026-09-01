@@ -86,6 +86,71 @@ def js_side(path, harness):
     return json.loads(out.stdout)
 
 
+def hostile_checks():
+    """Bound the two things an uploaded plan can do to the browser.
+
+    Both livemap pages run closure on user-supplied JSON. Before this was
+    bounded, 50 disconnected walls took 1.3 s and 100 took 21.5 s - roughly
+    n^4 - so a 5 MB upload froze the tab outright. A wall count alone does not
+    bound it either: cost depends on how DISCONNECTED a plan is, which is why
+    there is a wall-clock budget as well as a ceiling.
+    """
+    import random
+    import time as _time
+    from plan_ops import (close_wall_gaps, CLOSURE_BUDGET_S,
+                          MAX_WALLS_FOR_CLOSURE)
+
+    failures = 0
+    rnd = random.Random(1)
+
+    def disconnected(n):
+        return {"walls": [{"id": "w%d" % i,
+                           "start": {"x": rnd.uniform(0, 4000), "y": rnd.uniform(0, 4000)},
+                           "end": {"x": rnd.uniform(0, 4000), "y": rnd.uniform(0, 4000)},
+                           "thickness": 20.0, "height": 2.7} for i in range(n)]}
+
+    # A pathological plan must return, not hang. The ceiling is generous
+    # against the budget because indexing and the final report sit outside it.
+    ceiling = CLOSURE_BUDGET_S * 4
+    for n in (500, MAX_WALLS_FOR_CLOSURE):
+        d = disconnected(n)
+        t0 = _time.time()
+        close_wall_gaps(d)
+        el = _time.time() - t0
+        ok = el <= ceiling
+        failures += 0 if ok else 1
+        print("%s %d disconnected walls closed in %.2fs (ceiling %.1fs)"
+              % ("PASS" if ok else "FAIL", n, el, ceiling))
+
+    # Over the ceiling: refused outright, and it must say so.
+    d = disconnected(MAX_WALLS_FOR_CLOSURE + 1)
+    close_wall_gaps(d)
+    ok = d["gap_fill"]["enabled"] is False and d["gap_fill"]["skipped"]
+    failures += 0 if ok else 1
+    print("%s %d walls refused: %s" % ("PASS" if ok else "FAIL", MAX_WALLS_FOR_CLOSURE + 1,
+                                       (d["gap_fill"]["skipped"] or ["(no reason given)"])[0]))
+
+    # JSON has no NaN literal, but 1e400 parses to inf. A non-finite or
+    # non-positive wall must be dropped, not silently poison every comparison.
+    poisoned = {"walls": [
+        {"id": "inf", "start": {"x": float("inf"), "y": 0}, "end": {"x": 1, "y": 1},
+         "thickness": 10},
+        {"id": "neg", "start": {"x": 0, "y": 50}, "end": {"x": 100, "y": 50},
+         "thickness": -5},
+        {"id": "ok1", "start": {"x": 0, "y": 0}, "end": {"x": 100, "y": 0},
+         "thickness": 10},
+        {"id": "ok2", "start": {"x": 0, "y": 90}, "end": {"x": 100, "y": 90},
+         "thickness": 10},
+    ]}
+    close_wall_gaps(poisoned)
+    note = " ".join(poisoned["gap_fill"]["skipped"])
+    ok = "2 wall(s) dropped" in note
+    failures += 0 if ok else 1
+    print("%s non-finite and non-positive walls dropped" % ("PASS" if ok else "FAIL"))
+
+    return failures
+
+
 def main():
     if shutil.which("node") is None:
         print("SKIP: node is not on PATH, cannot check the JavaScript port")
@@ -119,6 +184,8 @@ def main():
                           % (key, py[key], twice[key]))
 
     print("\n%d/%d plans in parity" % (len(plans) - failures, len(plans)))
+
+    failures += hostile_checks()
 
     # The Kaggle cell is the third copy of this code and the one nobody looks
     # at, so check it here rather than leaving it to rot again.
