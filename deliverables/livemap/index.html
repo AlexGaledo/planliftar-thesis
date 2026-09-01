@@ -4,6 +4,10 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Live Floorplan Map</title>
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#111111">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
 <style>
   :root {
     --bg: #080808;
@@ -230,6 +234,20 @@
   .ctrl-btn:hover:not(:disabled) { background: rgba(255, 255, 255, 0.08); }
   .ctrl-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 </style>
+<script>
+// PWA registration. Guarded on isSecureContext because a service worker
+// will not register on an origin whose certificate Chrome distrusts - and
+// an unguarded call there throws in the console and looks like a bug in
+// this page rather than a trust problem. Failure is non-fatal: everything
+// works without it, you just lose offline and the install prompt.
+if ("serviceWorker" in navigator && window.isSecureContext) {
+  window.addEventListener("load", function () {
+    navigator.serviceWorker.register("sw.js").catch(function (e) {
+      console.info("[pwa] service worker not registered:", e && e.message);
+    });
+  });
+}
+</script>
 </head>
 <body>
   <div id="stage">

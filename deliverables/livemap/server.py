@@ -186,6 +186,12 @@ def cert_covers(path, ips):
         return False
 
     try:
+        try:
+            bc = cert.extensions.get_extension_for_class(x509.BasicConstraints).value
+            if not bc.ca:
+                return False       # pre-CA cert: regenerate so it can be trusted
+        except x509.ExtensionNotFound:
+            return False
         san = cert.extensions.get_extension_for_class(x509.SubjectAlternativeName).value
     except x509.ExtensionNotFound:
         return False
@@ -231,7 +237,21 @@ def ensure_cert(ips, force=False):
         .not_valid_before(now - datetime.timedelta(minutes=5))
         .not_valid_after(now + datetime.timedelta(days=365))
         .add_extension(x509.SubjectAlternativeName(alt), critical=False)
-        .add_extension(x509.BasicConstraints(ca=False, path_length=None), critical=True)
+        # ca=True is what lets this be installed as a trusted certificate on
+        # a phone. Chrome refuses to register a service worker on an origin
+        # whose certificate it distrusts - clicking through the interstitial
+        # is not enough - so without this the PWA can never install and the
+        # AR view can never work offline. The chain is length 1: this cert
+        # signs itself, and once it is in the trust store it validates.
+        .add_extension(x509.BasicConstraints(ca=True, path_length=0), critical=True)
+        .add_extension(
+            x509.KeyUsage(digital_signature=True, key_encipherment=True,
+                          key_cert_sign=True, crl_sign=True,
+                          content_commitment=False, data_encipherment=False,
+                          key_agreement=False, encipher_only=False,
+                          decipher_only=False),
+            critical=True,
+        )
         .sign(key, hashes.SHA256())
     )
 
@@ -299,11 +319,42 @@ class QuietHandler(http.server.SimpleHTTPRequestHandler):
     # -- GET /jobs/<id>, else fall through to normal static-file serving. --
     def do_GET(self):
         path = urllib.parse.urlsplit(self.path).path
+        if path == "/cert":
+            self._handle_cert()
+            return
         match = JOB_PATH_RE.match(path)
         if match:
             self._handle_job_status(match.group(1))
             return
         super().do_GET()
+
+    def _handle_cert(self):
+        """Hand out the TLS certificate so a phone can trust this origin.
+
+        Served as DER, which is the form Android's certificate installer
+        expects; the PEM on disk is what the server itself loads. This is the
+        PUBLIC certificate only - the private key lives beside it in .certs/
+        and is never served, which is also why that directory is gitignored.
+
+        Trusting this makes the phone accept THIS machine's LAN address
+        without an interstitial, which is what lets a service worker register
+        and the PWA install. Only install it on a device you control.
+        """
+        try:
+            with open(CERT_FILE, "rb") as fh:
+                pem = fh.read()
+            from cryptography import x509
+            from cryptography.hazmat.primitives.serialization import Encoding
+            der = x509.load_pem_x509_certificate(pem).public_bytes(Encoding.DER)
+        except Exception as exc:                      # no cert, or no cryptography
+            self.send_error(404, "no certificate available (%s)" % exc.__class__.__name__)
+            return
+        self.send_response(200)
+        self.send_header("Content-Type", "application/x-x509-ca-cert")
+        self.send_header("Content-Length", str(len(der)))
+        self.send_header("Content-Disposition", 'attachment; filename="planliftar.crt"')
+        self.end_headers()
+        self.wfile.write(der)
 
     # -- POST /jobs (image-upload job stub); nothing else accepts POST. --
     def do_POST(self):
