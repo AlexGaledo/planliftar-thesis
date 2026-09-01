@@ -386,7 +386,7 @@
         </div>
         <div class="ctl">
           <label for="denomSlider">Model scale &mdash; 1:<span id="denomOut">50</span></label>
-          <input id="denomSlider" type="range" min="5" max="200" step="1" value="50">
+          <input id="denomSlider" type="range" min="1" max="200" step="1" value="50">
         </div>
         <div class="ctl">
           <label for="yawSlider">Rotation &mdash; <span id="yawOut">0</span>&deg;</label>
@@ -396,6 +396,8 @@
           <input id="autoFitChk" type="checkbox" checked>
           <span>Fit to the surface I tap</span>
         </label>
+        <button id="walkthroughBtn" class="secondary">Walk through (1:1)</button>
+        <div class="muted">Full size, fit-to-surface off, walls opaque.</div>
         <div class="muted" id="scaleReadout">&mdash;</div>
       </div>
     </div>
@@ -432,11 +434,13 @@ import * as THREE from "three";
 let ppm = 100;              // plan px per real-world meter (user-editable)
 let modelDenom = 50;        // miniature factor: model renders at 1:modelDenom
 let autoFit = true;         // fit the miniature to the surface that was tapped
-const DENOM_MIN = 5;
+const DENOM_MIN = 1;   // 1:1 = walkthrough scale; below 1 the model would
+                       // be larger than the real building it represents
 const DENOM_MAX = 200;
 const SURFACE_FILL = 0.8;   // fit-to-surface leaves a 20% margin all round
 let wallHeightM = 2.5;      // real-world wall height, m
-let wallOpacity = 0.35;     // wall material opacity
+let wallOpacity = 1.0;      // wall material opacity (1 = solid, and the
+                            // material goes fully opaque with depth writes)
 let modelYawDeg = 0;        // yaw of the placed model, degrees clockwise from above
 const HEIGHT_MIN = 0.1, HEIGHT_MAX = 10;
 const OPACITY_MIN = 0.05, OPACITY_MAX = 1;
@@ -477,6 +481,7 @@ const denomOut = document.getElementById("denomOut");
 const yawSlider = document.getElementById("yawSlider");
 const yawOut = document.getElementById("yawOut");
 const autoFitChk = document.getElementById("autoFitChk");
+const walkthroughBtn = document.getElementById("walkthroughBtn");
 const scaleReadout = document.getElementById("scaleReadout");
 
 // Without these, an exception thrown inside an XR event callback or a
@@ -643,7 +648,7 @@ function applyControlPatch(patch) {
   const opacity = asNum(patch.wall_opacity);
   if (opacity !== null) {
     wallOpacity = clamp(opacity, OPACITY_MIN, OPACITY_MAX);
-    if (wallMaterial) wallMaterial.opacity = wallOpacity;
+    if (wallMaterial) applyWallOpacity(wallMaterial, wallOpacity);
   }
 
   const yaw = asNum(patch.rotation_deg);
@@ -770,20 +775,111 @@ async function loadFloorplan() {
 }
 
 let wallMaterial = null;
+let wallTexture = null;
+
+// Procedural wall surface, drawn to a canvas so the page stays self-contained
+// (no image request, works offline and behind the CSP the artifact viewer
+// applies). MeshBasicMaterial is unlit: every face of every box returns the
+// same flat colour, so at 1:1 the corners vanish and a wall reads as a
+// coloured slab rather than a surface. Lambert plus a hemisphere light gives
+// each face a different value, which is what makes an edge look like an edge.
+//
+// The noise is deliberately low-contrast. Its job is to break the flat fill so
+// the eye reads "plaster" and, more usefully, so it gives ARCore something to
+// track against on camera when the model fills the frame.
+function makeWallTexture() {
+  const S = 256;
+  const cv = document.createElement("canvas");
+  cv.width = cv.height = S;
+  const c = cv.getContext("2d");
+
+  c.fillStyle = "#e8e6e1";
+  c.fillRect(0, 0, S, S);
+
+  // fine speckle - plaster tooth
+  const img = c.getImageData(0, 0, S, S);
+  const px = img.data;
+  for (let i = 0; i < px.length; i += 4) {
+    const n = (Math.random() - 0.5) * 18;
+    px[i] += n; px[i + 1] += n; px[i + 2] += n;
+  }
+  c.putImageData(img, 0, 0);
+
+  // faint horizontal courses, one per texture tile = one per metre once the
+  // UVs below are scaled, so they read as a real-world size cue when you walk
+  // up to a wall instead of as an arbitrary pattern
+  c.strokeStyle = "rgba(0,0,0,0.06)";
+  c.lineWidth = 1;
+  for (let y = 0; y <= S; y += S / 4) {
+    c.beginPath(); c.moveTo(0, y + 0.5); c.lineTo(S, y + 0.5); c.stroke();
+  }
+
+  const tex = new THREE.CanvasTexture(cv);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.anisotropy = 4;
+  return tex;
+}
+
+// BoxGeometry gives every face UVs of 0..1, so a 6 m wall and a 0.3 m stub
+// get the same single tile and the texture stretches by 20x on one and not
+// the other. Rescale each face's UVs by its own real size instead, at
+// TILES_PER_M tiles per metre, so texel density is identical everywhere.
+//
+// Vertex order is BoxGeometry's own: 4 vertices per face, faces in the order
+// +x, -x, +y, -y, +z, -z. The box here is built as (thickness, height,
+// length), so +x/-x are the two long wall faces, +y/-y the top and bottom,
+// and +z/-z the end caps.
+const TILES_PER_M = 1.0;
+function scaleBoxUVs(geom, thickness, height, length) {
+  const faceUV = [
+    [length, height],      // +x  long face
+    [length, height],      // -x  long face
+    [thickness, length],   // +y  top
+    [thickness, length],   // -y  bottom
+    [thickness, height],   // +z  end cap
+    [thickness, height],   // -z  end cap
+  ];
+  const uv = geom.attributes.uv;
+  // 4 verts x 6 faces. A segmented box would break the indexing above, so
+  // bail rather than scramble the UVs on a geometry this was not written for.
+  if (!uv || uv.count !== 24) return;
+  for (let f = 0; f < 6; f++) {
+    const su = faceUV[f][0] * TILES_PER_M;
+    const sv = faceUV[f][1] * TILES_PER_M;
+    for (let v = 0; v < 4; v++) {
+      const i = f * 4 + v;
+      uv.setXY(i, uv.getX(i) * su, uv.getY(i) * sv);
+    }
+  }
+  uv.needsUpdate = true;
+}
+
+// Opacity below 1 has to switch the material into transparent mode AND turn
+// depth writes off, or translucent walls occlude each other in draw order and
+// the far side of the building disappears. At exactly 1 both go the other
+// way, which is what makes a wall look solid rather than like tinted glass.
+function applyWallOpacity(material, opacity) {
+  const solid = opacity >= 0.99;
+  material.opacity = opacity;
+  material.transparent = !solid;
+  material.depthWrite = solid;
+  material.needsUpdate = true;
+}
 
 function buildFloorplanGroup(data) {
   const group = new THREE.Group();
   group.name = "floorplan";
 
+  if (!wallTexture) wallTexture = makeWallTexture();
+
   // Held in a module-level ref so a wall_opacity control patch can change it
   // without rebuilding 240-odd box meshes.
-  const material = new THREE.MeshBasicMaterial({
-    color: 0x5ac8ea,
-    transparent: true,
-    opacity: wallOpacity,
-    side: THREE.DoubleSide,
-    depthWrite: false, // translucent boxes: let far walls show through near ones
+  const material = new THREE.MeshLambertMaterial({
+    color: 0xffffff,
+    map: wallTexture,
+    side: THREE.DoubleSide,   // you stand INSIDE these at 1:1
   });
+  applyWallOpacity(material, wallOpacity);
 
   (data.walls || []).forEach((w) => {
     if (!w.start || !w.end) return;
@@ -794,6 +890,7 @@ function buildFloorplanGroup(data) {
     const thicknessM = Math.max(0.02, (w.thickness || 4) / ppm);
 
     const geom = new THREE.BoxGeometry(thicknessM, wallHeightM, length);
+    scaleBoxUVs(geom, thicknessM, wallHeightM, length);
     const mesh = new THREE.Mesh(geom, material);
 
     const mid = new THREE.Vector3().addVectors(p1, p2).multiplyScalar(0.5);
@@ -813,12 +910,16 @@ function buildFloorplanGroup(data) {
   const slabW = planBoundsPx.widthPx / ppm;
   const slabD = planBoundsPx.heightPx / ppm;
   if (slabW > 0 && slabD > 0) {
+    const slabGeom = new THREE.BoxGeometry(slabW * 1.04, 0.02, slabD * 1.04);
+    scaleBoxUVs(slabGeom, slabW * 1.04, 0.02, slabD * 1.04);
     const slab = new THREE.Mesh(
-      new THREE.BoxGeometry(slabW * 1.04, 0.02, slabD * 1.04),
-      new THREE.MeshBasicMaterial({
-        color: 0x0e2630,
-        transparent: true,
-        opacity: 0.55,
+      slabGeom,
+      // At 1:1 this is the floor you are standing on, so it is opaque and
+      // lit like the walls - a translucent slab under your feet reads as a
+      // hole and gives the eye nothing to judge distance against.
+      new THREE.MeshLambertMaterial({
+        color: 0x9a9a9a,
+        map: wallTexture,
         side: THREE.DoubleSide,
       })
     );
@@ -962,6 +1063,18 @@ function initThree() {
   renderer.setClearColor(0x000000, 0); // transparent, so AR camera passthrough shows through
   renderer.xr.enabled = true;
   sceneContainer.appendChild(renderer.domElement);
+
+  // Lambert walls need light or they render black. A hemisphere light alone
+  // would shade every vertical face identically (it varies with the Y
+  // component of the normal, and every wall face is vertical), so the
+  // directional light is what actually separates two walls meeting at a
+  // corner. Both are scene-fixed rather than camera-fixed, so the shading
+  // stays put as you walk around - shading that follows the camera destroys
+  // the illusion that the model is a real object in the room.
+  scene.add(new THREE.HemisphereLight(0xffffff, 0x707070, 2.0));
+  const sun = new THREE.DirectionalLight(0xffffff, 1.1);
+  sun.position.set(1.0, 2.0, 0.6);
+  scene.add(sun);
 
   reticle = new THREE.Mesh(
     new THREE.RingGeometry(0.08, 0.1, 32).rotateX(-Math.PI / 2),
@@ -1594,6 +1707,21 @@ realSizeInput.addEventListener("change", () => {
   }
   ppm = longestPx / meters;
   rebuildPlacedGeometry();
+  syncScaleUi();
+  sendState();
+});
+
+// One button for the walkthrough case, because getting it wrong is three
+// separate mistakes and each one silently ruins a take: fit-to-surface left on
+// re-fits the model to whatever you tapped (a 1 m table -> roughly 1:8), the
+// scale slider defaults to 1:50, and translucent walls read as haze on camera.
+walkthroughBtn.addEventListener("click", () => {
+  autoFit = false;
+  autoFitChk.checked = false;
+  modelDenom = 1;
+  wallOpacity = 1;
+  if (wallMaterial) applyWallOpacity(wallMaterial, wallOpacity);
+  applyModelScale();
   syncScaleUi();
   sendState();
 });
