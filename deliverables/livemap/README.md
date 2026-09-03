@@ -296,6 +296,36 @@ group scale back out. So moving the phone a few centimeters across a
 tabletop model sweeps the dot across meters of plan - which is the point.
 `index.html` needs no changes for either mode.
 
+### Why it does not crawl on a phone
+
+The AR page used to run at a few frames per second on the `cubicasa` plan.
+Five changes, in rough order of how much each one bought:
+
+- **One draw call, not 244.** Every wall shares one material and none of
+  them move relative to each other, so their transforms are baked into the
+  vertices and the boxes are merged into a single `BufferGeometry`
+  (`mergeGeometries`). A phone GPU cares far more about the number of draw
+  calls than the number of triangles, and 244 boxes is only ~3k triangles.
+- **`xr.setFramebufferScaleFactor(0.8)`.** `setPixelRatio` has no effect
+  inside an XR session - the session's framebuffer sets the resolution, and
+  its default is the full native panel. 0.8 shades 36% fewer fragments and
+  the compositor upscales; over camera passthrough you cannot see it.
+- **Back-face culling (`FrontSide`).** Each wall is a closed box thinner
+  than a person, so no camera ever gets inside one and `DoubleSide` was
+  paying twice for faces nothing can see.
+- **No MSAA, pixel ratio capped at 2.** A 3x-DPR phone otherwise shades
+  2.25x the fragments of a 2x one for a difference nobody sees at arm's
+  length, and MSAA costs bandwidth on every frame on a mobile tiler.
+- **Exact-duplicate walls skipped at build time.** 36 of `cubicasa`'s 244
+  walls are the same box entered end-for-end (the v1 export emits one per
+  side of some shared boundaries). Two coincident boxes shade every
+  fragment twice and z-fight into a shimmer as you move. This is
+  render-side only - `plan_ops.js`, the plan schema and the pose stream are
+  untouched, so nothing has to stay in sync with it.
+
+Rebuilding the model (the ppm field) now also disposes the old geometry;
+before, each edit leaked a full copy into video memory.
+
 ### Fake mode (?fake=1), no headset/phone needed
 
 Append `?fake=1` to the URL (e.g. `http://localhost:8080/ar.html?fake=1`)

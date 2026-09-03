@@ -14,7 +14,7 @@
  * the server with --tls and install its certificate on the phone (see
  * README.md) or none of this applies.
  */
-const VERSION = "planliftar-v1";
+const VERSION = "planliftar-v2";
 const SHELL = VERSION + "-shell";
 
 // Same-origin app shell. Kept explicit rather than globbed: a typo here is a
@@ -31,9 +31,13 @@ const SHELL_URLS = [
   "./icons/maskable-512.png",
 ];
 
-// Cross-origin, and the one dependency the AR view cannot boot without.
-const THREE_URL =
-  "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js";
+// Cross-origin, and the dependencies the AR view cannot boot without: the
+// three.js core plus the addon the wall merge uses. A miss on either one is
+// a blank AR page, not a degraded one, so both are cached.
+const CDN_URLS = [
+  "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/utils/BufferGeometryUtils.js",
+];
 
 self.addEventListener("install", (event) => {
   event.waitUntil((async () => {
@@ -41,7 +45,9 @@ self.addEventListener("install", (event) => {
     // Individually, not addAll: addAll rejects the whole install if any single
     // request fails, and the CDN one is exactly the one that can.
     await Promise.all(SHELL_URLS.map((u) => cache.add(u).catch(() => {})));
-    await cache.add(new Request(THREE_URL, { mode: "no-cors" })).catch(() => {});
+    await Promise.all(CDN_URLS.map((u) =>
+      cache.add(new Request(u, { mode: "no-cors" })).catch(() => {})
+    ));
     self.skipWaiting();
   })());
 });
@@ -86,7 +92,7 @@ self.addEventListener("fetch", (event) => {
 
   // The pose hub is a WebSocket on another port; nothing here can or should
   // touch it. Anything else off-origin that is not three.js goes to network.
-  if (!sameOrigin && req.url !== THREE_URL) return;
+  if (!sameOrigin && !CDN_URLS.includes(req.url)) return;
 
   // App shell: serve from cache immediately, refresh in the background. The
   // page you get is the one you had last time, which on a demo is a feature -

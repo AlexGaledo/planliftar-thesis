@@ -435,12 +435,14 @@ if ("serviceWorker" in navigator && window.isSecureContext) {
 <script type="importmap">
 {
   "imports": {
-    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js"
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
   }
 }
 </script>
 <script type="module">
 import * as THREE from "three";
+import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
 
 "use strict";
 
@@ -881,6 +883,11 @@ function applyWallOpacity(material, opacity) {
   material.opacity = opacity;
   material.transparent = !solid;
   material.depthWrite = solid;
+  // Back faces are invisible in a solid wall, so cull them and shade half the
+  // fragments. Once the walls are see-through you are looking at the inside of
+  // the far face, so they have to come back - the fill-rate saving only exists
+  // in the mode that does not need them.
+  material.side = solid ? THREE.FrontSide : THREE.DoubleSide;
   material.needsUpdate = true;
 }
 
@@ -895,12 +902,42 @@ function buildFloorplanGroup(data) {
   const material = new THREE.MeshLambertMaterial({
     color: 0xffffff,
     map: wallTexture,
-    side: THREE.DoubleSide,   // you stand INSIDE these at 1:1
+    // side is set by applyWallOpacity below: FrontSide while the walls are
+    // solid (nothing can see a back face), DoubleSide once they are not.
+    side: THREE.FrontSide,
   });
   applyWallOpacity(material, wallOpacity);
 
+  // One box per wall used to mean one draw call per wall - 244 of them on the
+  // `cubicasa` plan, which is what made the page crawl on a phone. The boxes
+  // all share one material and never move relative to each other, so their
+  // transforms are baked into the vertices here and the lot is merged into a
+  // single geometry: 244 draw calls -> 1.
+  const wallGeoms = [];
+  const UP = new THREE.Vector3(0, 1, 0);
+  const _m = new THREE.Matrix4();
+  const _q = new THREE.Quaternion();
+  const _s = new THREE.Vector3(1, 1, 1);
+
+  // The v1 export emits a wall for each side of some shared boundaries, so 36
+  // of the `cubicasa` plan's 244 walls are the same box entered end-for-end.
+  // Two coincident boxes shade every fragment twice and their faces z-fight
+  // into a shimmer as you move. Key on the unordered endpoint pair so A->B and
+  // B->A collapse to one (exact-duplicate only - near-coincident walls that
+  // round to different pixels are left alone). Render-side only: `data` is
+  // untouched, so the pose stream, the plan schema and plan_ops.js parity are
+  // all unaffected.
+  const seenWalls = new Set();
+  const key1 = (w) => `${Math.round(w.start.x)},${Math.round(w.start.y)}`;
+  const key2 = (w) => `${Math.round(w.end.x)},${Math.round(w.end.y)}`;
+
   (data.walls || []).forEach((w) => {
     if (!w.start || !w.end) return;
+    const a = key1(w), b = key2(w);
+    const k = (a < b ? a + "|" + b : b + "|" + a)
+      + "|" + Math.round((w.thickness || 4) * 10);
+    if (seenWalls.has(k)) return;
+    seenWalls.add(k);
     const p1 = planToLocal(w.start.x, w.start.y);
     const p2 = planToLocal(w.end.x, w.end.y);
     const delta = new THREE.Vector3().subVectors(p2, p1);
@@ -909,17 +946,31 @@ function buildFloorplanGroup(data) {
 
     const geom = new THREE.BoxGeometry(thicknessM, wallHeightM, length);
     scaleBoxUVs(geom, thicknessM, wallHeightM, length);
-    const mesh = new THREE.Mesh(geom, material);
 
     const mid = new THREE.Vector3().addVectors(p1, p2).multiplyScalar(0.5);
-    mesh.position.set(mid.x, wallHeightM / 2, mid.z);
     // Align the box's local +Z ("length" axis) with delta - same
     // atan2(dx, dz) form as the yaw formula below, since both rotate a
     // +Z-forward vector to point along a direction in the XZ plane.
-    mesh.rotation.y = Math.atan2(delta.x, delta.z);
+    _q.setFromAxisAngle(UP, Math.atan2(delta.x, delta.z));
+    _m.compose(new THREE.Vector3(mid.x, wallHeightM / 2, mid.z), _q, _s);
+    geom.applyMatrix4(_m);
 
-    group.add(mesh);
+    wallGeoms.push(geom);
   });
+  if (wallGeoms.length) {
+    // All inputs are BoxGeometry with identical attributes, so this cannot
+    // realistically return null - but if it ever did, fall back to the
+    // one-mesh-per-wall form rather than dropping the walls entirely.
+    const merged = mergeGeometries(wallGeoms, false);
+    if (merged) {
+      wallGeoms.forEach((g) => g.dispose());
+      const mesh = new THREE.Mesh(merged, material);
+      mesh.name = "walls";
+      group.add(mesh);
+    } else {
+      wallGeoms.forEach((g) => group.add(new THREE.Mesh(g, material)));
+    }
+  }
   wallMaterial = material;
 
   // Slab at group-local y=0, i.e. flush with the surface that was tapped.
@@ -1075,11 +1126,29 @@ function initThree() {
     50
   );
 
-  renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-  renderer.setPixelRatio(window.devicePixelRatio);
+  // Perf, all three for the same reason - a phone GPU running an AR session
+  // is already rendering the camera passthrough, and this page is a few
+  // hundred flat-shaded boxes that gain nothing from extra samples or pixels:
+  //  - antialias off: MSAA on a mobile tiler costs bandwidth on every frame.
+  //  - pixel ratio capped at 2: a 3x-DPR phone otherwise shades 2.25x the
+  //    fragments of a 2x one for a difference nobody can see at arm's length.
+  //  - high-performance: ask for the discrete/large GPU where there is a
+  //    choice, instead of the browser's power-saving default.
+  renderer = new THREE.WebGLRenderer({
+    antialias: false,
+    alpha: true,
+    powerPreference: "high-performance",
+  });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
   renderer.setSize(window.innerWidth, window.innerHeight);
   renderer.setClearColor(0x000000, 0); // transparent, so AR camera passthrough shows through
   renderer.xr.enabled = true;
+  // setPixelRatio does not apply inside an XR session - the session's own
+  // framebuffer decides the resolution there, and on a phone its default is
+  // the full native panel per eye. 0.8 renders 36% fewer fragments; the
+  // result is upscaled by the compositor and, over a camera passthrough,
+  // reads the same. This is the single biggest lever on in-session frame rate.
+  renderer.xr.setFramebufferScaleFactor(0.8);
   sceneContainer.appendChild(renderer.domElement);
 
   // Lambert walls need light or they render black. A hemisphere light alone
@@ -1394,12 +1463,23 @@ function denomToFitSurface() {
   return THREE.MathUtils.clamp(longest / (SURFACE_FILL * extent), DENOM_MIN, DENOM_MAX);
 }
 
+// Dropping a group from the scene does not free its GPU buffers - the ppm
+// field rebuilds the whole model on every edit, so without this each rebuild
+// leaks a full copy of the merged wall geometry into video memory.
+function disposeGroup(group) {
+  if (!group) return;
+  group.traverse((o) => {
+    if (o.isMesh && o.geometry) o.geometry.dispose();
+  });
+}
+
 // ppm changes the plan->local mapping, so the geometry has to be rebuilt;
 // modelDenom does not, so it only ever calls applyModelScale().
 function rebuildPlacedGeometry() {
   if (!placed || !placementGroup) return;
   const pos = placementGroup.position.clone();
   scene.remove(placementGroup);
+  disposeGroup(placementGroup);
   placementGroup = buildFloorplanGroup(planData);
   placementGroup.position.copy(pos);
   applyModelScale();
@@ -1413,7 +1493,10 @@ function placeFloorplanAtReticle() {
   const scaleV = new THREE.Vector3();
   reticle.matrix.decompose(pos, quat, scaleV);
 
-  if (placementGroup) scene.remove(placementGroup);
+  if (placementGroup) {
+    scene.remove(placementGroup);
+    disposeGroup(placementGroup);
+  }
   placementGroup = buildFloorplanGroup(planData);
 
   // Position-only placement (see top-of-file coordinate comment): the
@@ -1461,6 +1544,7 @@ function resetPlacementState() {
   camStats.maxM = 0;
   if (placementGroup) {
     scene.remove(placementGroup);
+    disposeGroup(placementGroup);
     placementGroup = null;
   }
   if (reticle) reticle.visible = false;
