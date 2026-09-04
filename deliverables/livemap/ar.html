@@ -140,16 +140,23 @@
 <link rel="icon" href="icons/icon-192.png">
 <link rel="apple-touch-icon" href="icons/icon-192.png">
 <style>
+  /* Same tokens as index.html: dark ground, one mint accent for live/primary
+     things, amber only for "this is a guess" or "needs attention". */
   :root {
     --bg: #0b0e14;
-    --panel: rgba(18, 22, 32, 0.85);
-    --panel-border: rgba(255, 255, 255, 0.08);
+    --panel: rgba(18, 22, 31, 0.86);
+    --panel-solid: rgba(18, 22, 31, 0.72);
+    --panel-border: rgba(255, 255, 255, 0.1);
     --text: #e6e9f0;
-    --muted: #7b8496;
+    --muted: #8a93a6;
     --accent: #39f0c0;
+    --accent-ink: #062e24;
     --ok: #39f0c0;
-    --bad: #ff5f6d;
+    --bad: #8a93a6;
     --warn: #ffb020;
+    --radius: 16px;
+    --safe-b: env(safe-area-inset-bottom, 0px);
+    --safe-t: env(safe-area-inset-top, 0px);
   }
   * { box-sizing: border-box; }
   html, body {
@@ -160,74 +167,72 @@
     background: var(--bg);
     color: var(--text);
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-size: 16px;
+    line-height: 1.4;
     overflow: hidden;
+    -webkit-tap-highlight-color: transparent;
   }
-  #sceneContainer {
+  button, input { font: inherit; color: inherit; }
+  #sceneContainer { position: fixed; inset: 0; }
+  #sceneContainer canvas { display: block; width: 100%; height: 100%; }
+  #overlay { position: fixed; inset: 0; pointer-events: none; }
+  #overlay > * { pointer-events: auto; }
+  .muted { color: var(--muted); }
+  .small { font-size: 13px; }
+
+  /* ---- top bar: one status pill, one hide button ---- */
+  .topbar {
     position: fixed;
-    inset: 0;
-  }
-  #sceneContainer canvas {
-    display: block;
-    width: 100%;
-    height: 100%;
-  }
-  #overlay {
-    position: fixed;
-    inset: 0;
-    pointer-events: none;
-  }
-  #overlay > * {
-    pointer-events: auto;
-  }
-  .panel {
-    background: var(--panel);
-    border: 1px solid var(--panel-border);
-    border-radius: 10px;
-    padding: 10px 14px;
-    font-size: 13px;
-    backdrop-filter: blur(6px);
-    box-shadow: 0 4px 18px rgba(0, 0, 0, 0.35);
-  }
-  .title {
-    position: fixed;
-    top: 14px;
-    left: 14px;
-  }
-  .title b { font-weight: 600; letter-spacing: 0.02em; }
-  .hud {
-    position: fixed;
-    top: 14px;
-    right: 14px;
-    min-width: 170px;
-  }
-  .hud-row {
+    top: calc(12px + var(--safe-t));
+    left: 12px;
+    right: 12px;
     display: flex;
     align-items: center;
+    justify-content: space-between;
     gap: 8px;
-    line-height: 1.5;
+    pointer-events: none;
   }
-  .hud-row + .hud-row { margin-top: 4px; }
+  .topbar > * { pointer-events: auto; }
+  .pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 14px;
+    border-radius: 999px;
+    background: var(--panel);
+    border: 1px solid var(--panel-border);
+    backdrop-filter: blur(8px);
+    font-size: 14px;
+    font-weight: 500;
+  }
   .dot {
-    width: 8px;
-    height: 8px;
+    width: 9px;
+    height: 9px;
     border-radius: 50%;
     flex: none;
     background: var(--bad);
-    box-shadow: 0 0 6px currentColor;
   }
-  .dot.ok { background: var(--ok); color: var(--ok); }
-  .dot.warn { background: var(--warn); color: var(--warn); }
-  .dot.bad { background: var(--bad); color: var(--bad); }
-  .muted { color: var(--muted); }
+  .dot.ok { background: var(--ok); box-shadow: 0 0 8px var(--ok); }
+  .dot.warn { background: var(--warn); }
+  .dot.bad { background: var(--bad); }
+  .icon-btn {
+    min-width: 44px;
+    min-height: 44px;
+    padding: 0 14px;
+    border-radius: 999px;
+    border: 1px solid var(--panel-border);
+    background: var(--panel);
+    backdrop-filter: blur(8px);
+    font-size: 14px;
+    cursor: pointer;
+  }
   .chip {
     display: none;
-    align-items: center;
-    gap: 6px;
     position: fixed;
-    top: 64px;
-    right: 14px;
+    top: calc(64px + var(--safe-t));
+    right: 12px;
     font-size: 11px;
-    letter-spacing: 0.04em;
+    letter-spacing: 0.06em;
     text-transform: uppercase;
     color: #0b0e14;
     background: var(--warn);
@@ -235,113 +240,271 @@
     padding: 4px 10px;
     font-weight: 700;
   }
-  .controls {
+
+  /* ---- bottom: coach line + one big action, then the sheet once placed ---- */
+  .bottom {
     position: fixed;
     left: 0;
     right: 0;
-    bottom: 24px;
+    bottom: 0;
+    padding: 0 12px calc(14px + var(--safe-b));
     display: flex;
     flex-direction: column;
-    align-items: center;
+    align-items: stretch;
     gap: 10px;
   }
-  .hint {
-    max-width: 90%;
+  .coach {
+    align-self: center;
+    max-width: 92%;
     text-align: center;
-  }
-  button {
-    font: inherit;
-    font-weight: 600;
-    font-size: 15px;
-    border: none;
+    padding: 10px 16px;
     border-radius: 999px;
-    padding: 14px 32px;
-    cursor: pointer;
-    color: #0b0e14;
-    background: var(--accent);
-    box-shadow: 0 6px 20px rgba(57, 240, 192, 0.35);
+    background: var(--panel);
+    border: 1px solid var(--panel-border);
+    backdrop-filter: blur(8px);
+    font-size: 15px;
   }
-  button:disabled {
-    background: #3a4150;
+  .coach:empty { display: none; }
+  .actions {
+    display: flex;
+    gap: 10px;
+    justify-content: center;
+    align-items: center;
+  }
+  .btn {
+    min-height: 56px;
+    padding: 14px 28px;
+    border-radius: 999px;
+    border: none;
+    background: var(--accent);
+    color: var(--accent-ink);
+    font-size: 17px;
+    font-weight: 650;
+    cursor: pointer;
+    box-shadow: 0 8px 24px rgba(57, 240, 192, 0.3);
+    flex: 1;
+    max-width: 420px;
+  }
+  .btn:disabled {
+    background: #2a3140;
     color: var(--muted);
     box-shadow: none;
     cursor: not-allowed;
   }
-  button.secondary {
-    background: transparent;
+  .btn.secondary {
+    flex: none;
+    background: var(--panel);
     color: var(--text);
     border: 1px solid var(--panel-border);
-    padding: 8px 18px;
-    font-size: 13px;
     box-shadow: none;
+    font-weight: 500;
+    font-size: 15px;
+    min-height: 48px;
+    padding: 10px 18px;
+    backdrop-filter: blur(8px);
   }
-  .err {
-    position: fixed;
-    bottom: 110px;
-    left: 14px;
-    right: 14px;
-    background: rgba(255, 95, 109, 0.12);
-    border: 1px solid rgba(255, 95, 109, 0.35);
-    color: #ffb3ba;
-    border-radius: 10px;
-    padding: 10px 14px;
-    font-size: 12px;
-    line-height: 1.5;
-    display: none;
-    white-space: pre-line;
-    max-height: 40vh;
+  .btn.secondary:disabled { opacity: 0.4; }
+
+  /* Stage gating. The JS sets data-stage on #overlay; only the elements for
+     that stage are shown. Stages: ready (before AR), aiming (AR running, not
+     placed), placed, fake (?fake=1). */
+  [data-show] { display: none !important; }
+  #overlay[data-stage="ready"]  [data-show~="ready"],
+  #overlay[data-stage="aiming"] [data-show~="aiming"],
+  #overlay[data-stage="placed"] [data-show~="placed"],
+  #overlay[data-stage="fake"]   [data-show~="fake"] { display: revert !important; }
+
+  /* ---- sheet: what most people need after placing ---- */
+  .sheet {
+    background: var(--panel-solid);
+    backdrop-filter: blur(10px);
+    border: 1px solid var(--panel-border);
+    border-radius: var(--radius);
+    padding: 12px 14px 14px;
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.45);
+    max-height: 60vh;
     overflow-y: auto;
   }
-  #fakePanel {
-    display: none;
-    position: fixed;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-    min-width: 260px;
-    text-align: center;
+  .sheet.collapsed > *:not(.sheet-head) { display: none; }
+  .sheet-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    min-height: 32px;
   }
-  /* Sits bottom-right, clear of .title (top-left), .hud (top-right) and
-     .controls (bottom-centre). */
-  .ui-toggle {
-    position: fixed;
-    right: 14px;
-    bottom: 14px;
-    padding: 10px 18px;
-    font-size: 13px;
-    font-weight: 500;
-    color: var(--text);
-    background: var(--panel);
+  .sheet-head b { font-weight: 600; font-size: 15px; }
+  .sheet-head button {
+    min-width: 44px;
+    min-height: 36px;
+    border-radius: 10px;
     border: 1px solid var(--panel-border);
-    box-shadow: none;
-    backdrop-filter: blur(6px);
+    background: transparent;
+    color: var(--muted);
+    cursor: pointer;
   }
-  /* Everything in the overlay goes EXCEPT the toggle - hiding that too would
-     leave no way back into the UI without reloading the page. */
-  #overlay.ui-hidden > *:not(.ui-toggle) { display: none !important; }
-  #overlay.ui-hidden .ui-toggle { opacity: 0.4; }
-
-  #scalePanel { display: none; }
-  #scalePanel .ctl { margin-top: 10px; }
-  #scalePanel label { display: block; font-size: 13px; margin-bottom: 4px; }
-  #scalePanel .row { display: flex; align-items: center; gap: 6px; }
-  #scalePanel input[type="number"] {
-    width: 90px;
-    padding: 6px 8px;
-    border-radius: 6px;
-    border: 1px solid rgba(255,255,255,0.25);
-    background: rgba(0,0,0,0.35);
-    color: inherit;
-    font: inherit;
+  .seg {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 4px;
+    padding: 4px;
+    margin-top: 10px;
+    border-radius: 12px;
+    background: rgba(0, 0, 0, 0.35);
+    border: 1px solid var(--panel-border);
   }
-  #scalePanel input[type="range"] { width: 100%; }
-  #scalePanel .chk { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
-  #scalePanel .chk input { width: auto; }
-  #scaleReadout {
+  .seg button {
+    min-height: 48px;
+    border: none;
+    border-radius: 9px;
+    background: transparent;
+    color: var(--muted);
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .seg button.active { background: var(--accent); color: var(--accent-ink); }
+  .seg small { display: block; font-weight: 400; font-size: 11px; opacity: 0.8; }
+  .field { display: flex; flex-direction: column; gap: 6px; margin-top: 12px; }
+  .field label { font-size: 14px; }
+  .field .hint { font-size: 12px; color: var(--muted); }
+  .with-unit { position: relative; }
+  .with-unit input { padding-right: 36px; }
+  .with-unit .unit {
+    position: absolute;
+    right: 12px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: var(--muted);
+    pointer-events: none;
+  }
+  .field input[type="number"] {
+    width: 100%;
+    min-height: 44px;
+    padding: 8px 12px;
+    border-radius: 10px;
+    border: 1px solid var(--panel-border);
+    background: rgba(0, 0, 0, 0.35);
+  }
+  .field input[type="range"] { width: 100%; accent-color: var(--accent); }
+  .rotate {
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
+    align-items: center;
+    gap: 8px;
+    margin-top: 12px;
+  }
+  .rotate button {
+    min-height: 44px;
+    border-radius: 10px;
+    border: 1px solid var(--panel-border);
+    background: rgba(255, 255, 255, 0.05);
+    cursor: pointer;
+    font-size: 15px;
+  }
+  .rotate .val { text-align: center; font-size: 14px; color: var(--muted); min-width: 56px; }
+  .check {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 12px;
+    font-size: 14px;
+  }
+  .check input { width: 20px; height: 20px; accent-color: var(--accent); }
+  details.adv { margin-top: 12px; }
+  details.adv summary {
+    cursor: pointer;
+    color: var(--muted);
+    font-size: 13px;
+    list-style: none;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 32px;
+    user-select: none;
+  }
+  details.adv summary::-webkit-details-marker { display: none; }
+  details.adv summary::before {
+    content: "";
+    width: 6px;
+    height: 6px;
+    border-right: 1.5px solid currentColor;
+    border-bottom: 1.5px solid currentColor;
+    transform: rotate(-45deg);
+    transition: transform 0.15s;
+  }
+  details.adv[open] summary::before { transform: rotate(45deg); }
+  .mono {
     margin-top: 8px;
     font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
     font-size: 12px;
-    line-height: 1.45;
+    line-height: 1.5;
+    color: var(--muted);
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+
+  /* ---- ready card ---- */
+  .ready-card {
+    position: fixed;
+    left: 16px;
+    right: 16px;
+    top: 50%;
+    transform: translateY(-58%);
+    padding: 22px 20px;
+    border-radius: var(--radius);
+    background: var(--panel-solid);
+    backdrop-filter: blur(10px);
+    border: 1px solid var(--panel-border);
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.45);
+    text-align: center;
+  }
+  .ready-card h1 { margin: 0 0 4px; font-size: 22px; font-weight: 700; }
+  .ready-card ol {
+    text-align: left;
+    margin: 14px auto 0;
+    padding-left: 22px;
+    color: var(--muted);
+    font-size: 15px;
+    max-width: 320px;
+  }
+  .ready-card ol li + li { margin-top: 6px; }
+
+  /* ---- problems ---- */
+  .err {
+    position: fixed;
+    top: calc(64px + var(--safe-t));
+    left: 12px;
+    right: 12px;
+    background: rgba(255, 176, 32, 0.12);
+    border: 1px solid rgba(255, 176, 32, 0.45);
+    color: #ffd48a;
+    border-radius: 12px;
+    padding: 10px 14px;
+    font-size: 13px;
+    line-height: 1.5;
+    display: none;
+    white-space: pre-line;
+    max-height: 32vh;
+    overflow-y: auto;
+  }
+
+  /* Hiding the UI. Everything in the overlay goes EXCEPT the top bar's
+     toggle - hiding that too would leave no way back without reloading. */
+  #overlay.ui-hidden > *:not(.topbar) { display: none !important; }
+  #overlay.ui-hidden .topbar .pill { display: none; }
+  #overlay.ui-hidden .icon-btn { opacity: 0.5; }
+
+  #fakePanel {
+    position: fixed;
+    top: 50%;
+    left: 16px;
+    right: 16px;
+    transform: translateY(-50%);
+    text-align: center;
+    padding: 18px;
+    border-radius: var(--radius);
+    background: var(--panel-solid);
+    border: 1px solid var(--panel-border);
   }
   #fakePanel .pose {
     margin-top: 8px;
@@ -368,66 +531,89 @@ if ("serviceWorker" in navigator && window.isSecureContext) {
 <body>
   <div id="sceneContainer"></div>
 
-  <div id="overlay">
-    <div class="panel title">
-      <b>Sword Art Online</b>
-      <div class="muted" id="planInfo">loading floorplan&hellip;</div>
+  <div id="overlay" data-stage="ready">
+    <div class="topbar">
+      <span class="pill"><span class="dot bad" id="wsDot"></span><span id="wsStatus">Connecting&hellip;</span></span>
+      <button id="uiToggle" class="icon-btn" type="button">Hide</button>
     </div>
 
-    <div class="panel hud">
-      <div class="hud-row">
-        <span class="dot bad" id="wsDot"></span>
-        <span id="wsStatus">Connecting&hellip;</span>
-      </div>
-      <div class="hud-row">
-        <span class="muted" id="placedStatus">Not placed</span>
-      </div>
-    </div>
-
-    <div class="chip" id="fakeChip">Fake mode</div>
-
-    <div class="controls">
-      <div class="panel hint" id="placeHint">Checking WebXR support&hellip;</div>
-      <button id="startBtn" disabled>Start AR</button>
-      <button id="placeBtn" style="display:none;">Place here</button>
-      <button id="floorBtn" class="secondary" style="display:none;" disabled>Drop to floor</button>
-      <button id="resetBtn" class="secondary" style="display:none;">Reset placement</button>
-      <div class="panel muted" id="tapInfo" style="display:none;">&mdash;</div>
-
-      <div class="panel" id="scalePanel">
-        <b>Dimensions</b>
-        <div class="ctl">
-          <label for="realSizeInput">Longest side of the real building</label>
-          <div class="row">
-            <input id="realSizeInput" type="number" min="0.5" max="500" step="0.1">
-            <span class="muted">m</span>
-          </div>
-        </div>
-        <div class="ctl">
-          <label for="denomSlider">Model scale &mdash; 1:<span id="denomOut">50</span></label>
-          <input id="denomSlider" type="range" min="1" max="200" step="1" value="50">
-        </div>
-        <div class="ctl">
-          <label for="yawSlider">Rotation &mdash; <span id="yawOut">0</span>&deg;</label>
-          <input id="yawSlider" type="range" min="0" max="359" step="1" value="0">
-        </div>
-        <label class="chk">
-          <input id="autoFitChk" type="checkbox" checked>
-          <span>Fit to the surface I tap</span>
-        </label>
-        <button id="walkthroughBtn" class="secondary">Walk through (1:1)</button>
-        <div class="muted">Full size, fit-to-surface off, walls opaque.</div>
-        <div class="muted" id="scaleReadout">&mdash;</div>
-      </div>
-    </div>
-
-    <button id="uiToggle" class="ui-toggle">Hide UI</button>
+    <div class="chip" id="fakeChip">Test mode</div>
 
     <div class="panel err" id="errBox"></div>
 
-    <div class="panel" id="fakePanel">
-      <b>Fake walking loop</b>
-      <div class="muted">?fake=1 debug mode - no WebXR, streaming synthetic poses</div>
+    <!-- READY: what this is and what to do, nothing else -->
+    <div class="ready-card" data-show="ready">
+      <h1>PlanLift AR</h1>
+      <div class="muted small" id="planInfo">loading floor plan&hellip;</div>
+      <ol>
+        <li>Tap <b>Start AR</b> and allow the camera.</li>
+        <li>Point at the floor until a ring appears.</li>
+        <li>Tap <b>Place</b>. Then walk.</li>
+      </ol>
+    </div>
+
+    <div class="bottom">
+      <div class="coach" id="placeHint">Checking this phone&hellip;</div>
+
+      <div class="actions">
+        <button id="startBtn" class="btn" data-show="ready" disabled>Start AR</button>
+        <button id="placeBtn" class="btn" data-show="aiming">Place</button>
+      </div>
+
+      <!-- PLACED: the sheet. Three things most people touch, rest in Advanced. -->
+      <div class="sheet" id="scalePanel" data-show="placed">
+        <div class="sheet-head">
+          <b id="placedStatus">Placed</b>
+          <div>
+            <button id="resetBtn" type="button" title="Place the model again">Start over</button>
+            <button id="sheetToggle" type="button" aria-label="Collapse">&#8964;</button>
+          </div>
+        </div>
+
+        <div class="seg" role="group" aria-label="Model size">
+          <button type="button" id="tabletopBtn">Tabletop<small>fits on a desk</small></button>
+          <button type="button" id="walkthroughBtn">Life-size<small>walk through it</small></button>
+        </div>
+
+        <div class="field">
+          <label for="realSizeInput">Building length</label>
+          <div class="with-unit">
+            <input id="realSizeInput" type="number" min="0.5" max="500" step="0.1" inputmode="decimal">
+            <span class="unit">m</span>
+          </div>
+          <div class="hint">Longest side of the real building. Sets how big everything is.</div>
+        </div>
+
+        <div class="rotate">
+          <button type="button" id="rotL">&#8634; 15&deg;</button>
+          <div class="val"><span id="yawOut">0</span>&deg;</div>
+          <button type="button" id="rotR">&#8635; 15&deg;</button>
+        </div>
+
+        <details class="adv">
+          <summary>Advanced</summary>
+          <div class="field">
+            <label for="denomSlider">Model scale &middot; 1:<span id="denomOut">50</span></label>
+            <input id="denomSlider" type="range" min="1" max="200" step="1" value="50">
+          </div>
+          <div class="field">
+            <label for="yawSlider">Rotation &middot; fine</label>
+            <input id="yawSlider" type="range" min="0" max="359" step="1" value="0">
+          </div>
+          <label class="check">
+            <input id="autoFitChk" type="checkbox" checked>
+            <span>Fit the model to the surface I tap</span>
+          </label>
+          <button id="floorBtn" class="btn secondary" type="button" style="margin-top:12px; width:100%;" disabled>Drop onto the floor</button>
+          <div class="mono" id="scaleReadout">&mdash;</div>
+          <div class="mono" id="tapInfo">&mdash;</div>
+        </details>
+      </div>
+    </div>
+
+    <div id="fakePanel" data-show="fake">
+      <b>Test mode</b>
+      <div class="muted small">No camera. Streaming a scripted walking loop to the map.</div>
       <div class="pose" id="fakePose">&mdash;</div>
     </div>
   </div>
@@ -505,6 +691,17 @@ const yawOut = document.getElementById("yawOut");
 const autoFitChk = document.getElementById("autoFitChk");
 const walkthroughBtn = document.getElementById("walkthroughBtn");
 const scaleReadout = document.getElementById("scaleReadout");
+const tabletopBtn = document.getElementById("tabletopBtn");
+const rotL = document.getElementById("rotL");
+const rotR = document.getElementById("rotR");
+const sheetToggle = document.getElementById("sheetToggle");
+
+// UI stages. The CSS shows only the elements tagged for the current stage
+// (data-show="..."), so the page presents one decision at a time instead of
+// every control at once: ready -> aiming -> placed, or fake for ?fake=1.
+function setStage(stage) {
+  overlayRoot.dataset.stage = stage;
+}
 
 // Without these, an exception thrown inside an XR event callback or a
 // rejected promise disappears entirely - the page just appears to ignore
@@ -1014,10 +1211,8 @@ function buildFloorplanGroup(data) {
 function startFakeMode() {
   xrStatus = "fake";
   fakeChip.style.display = "inline-flex";
-  fakePanel.style.display = "block";
-  startBtn.style.display = "none";
-  resetBtn.style.display = "none";
-  placeHint.textContent = "Fake mode: streaming a scripted walking loop, no WebXR.";
+  setStage("fake");
+  placeHint.textContent = "Test mode: sending a scripted walk to the map.";
 
   connectWs();
 
@@ -1215,7 +1410,9 @@ async function checkXrSupport() {
   }
 
   if (!navigator.xr) {
-    placeHint.textContent = "WebXR is not available in this browser.";
+    placeHint.textContent = insecure
+      ? "AR needs a secure (https) address. See the note above."
+      : "AR is not available in this browser. Use Chrome on an Android phone.";
     xrStatus = "unsupported";
     if (!insecure) {
       appendError(
@@ -1228,7 +1425,7 @@ async function checkXrSupport() {
   try {
     const supported = await navigator.xr.isSessionSupported("immersive-ar");
     if (!supported) {
-      placeHint.textContent = "This device/browser does not support immersive-ar.";
+      placeHint.textContent = "This phone does not support AR in the browser.";
       xrStatus = "unsupported";
       appendError(
         "navigator.xr.isSessionSupported('immersive-ar') returned false. " +
@@ -1244,7 +1441,7 @@ async function checkXrSupport() {
   }
 
   startBtn.disabled = false;
-  placeHint.textContent = "Tap Start AR, then point at the floor.";
+  placeHint.textContent = "Ready. Tap Start AR.";
 }
 
 startBtn.addEventListener("click", onStartAr);
@@ -1310,14 +1507,10 @@ async function onStartAr() {
     console.info("[ar] reference space:", renderer.xr.getReferenceSpace() ? spaceType : "none",
                  "| floor y:", floorY, "| granted features:", granted);
 
-    startBtn.style.display = "none";
-    resetBtn.style.display = "inline-block";
-    placeBtn.style.display = "inline-block";
-    floorBtn.style.display = "inline-block";
-    tapInfo.style.display = "block";
+    setStage("aiming");
     xrStatus = "active";
     sendState();
-    placeHint.textContent = "Point at a detected floor, then tap to place the floorplan.";
+    placeHint.textContent = "Point at the floor. When the ring appears, tap Place.";
 
     const viewerSpace = await session.requestReferenceSpace("viewer");
     // entityTypes defaults to ["plane"], which means the reticle only appears
@@ -1356,13 +1549,9 @@ function onSessionEnd() {
   floorY = null;
   lastTrackedHitY = null;
   resetPlacementState();
-  startBtn.style.display = "inline-block";
+  setStage("ready");
   startBtn.disabled = false;
-  resetBtn.style.display = "none";
-  placeBtn.style.display = "none";
-  floorBtn.style.display = "none";
-  tapInfo.style.display = "none";
-  placeHint.textContent = "AR session ended. Tap Start AR to begin again.";
+  placeHint.textContent = "AR stopped. Tap Start AR to begin again.";
 }
 
 let selectCount = 0;
@@ -1559,11 +1748,13 @@ function placeFloorplanAtReticle() {
 
   reticle.visible = false;
   placed = true;
-  placedStatus.textContent = `Placed at 1:${Math.round(modelDenom)}` +
-    (fittedTo ? ` (fitted to a ${(fittedTo * 100).toFixed(0)} cm surface)` : "");
+  setStage("placed");
+  placedStatus.textContent = Math.round(modelDenom) === 1
+    ? "Life-size"
+    : `Tabletop, 1:${Math.round(modelDenom)}`;
   placeHint.textContent = fittedTo
-    ? "Placed on the surface. Adjust size here or from the laptop panel."
-    : "Placed. No surface size detected - set the scale here or from the laptop.";
+    ? "Placed. Walk around it, or adjust below."
+    : "Placed. Adjust the size below if it looks off.";
   sendState();
 }
 
@@ -1619,7 +1810,8 @@ function resetPlacementState() {
   placedStatus.textContent = "Not placed";
   sendState();
   if (xrSession) {
-    placeHint.textContent = "Point at a detected floor, then tap to place the floorplan.";
+    setStage("aiming");
+    placeHint.textContent = "Point at the floor. When the ring appears, tap Place.";
   }
 }
 
@@ -1850,6 +2042,12 @@ function syncScaleUi() {
   if (document.activeElement !== yawSlider) yawSlider.value = String(Math.round(modelYawDeg));
   yawOut.textContent = String(Math.round(modelYawDeg));
   autoFitChk.checked = autoFit;
+  const life = denom === 1;
+  tabletopBtn.classList.toggle("active", !life);
+  walkthroughBtn.classList.toggle("active", life);
+  if (placed) {
+    placedStatus.textContent = life ? "Life-size" : `Tabletop, 1:${denom}`;
+  }
 
   const { w, d } = realFootprintM();
   const longest = Math.max(w, d);
@@ -1869,7 +2067,7 @@ function syncScaleUi() {
 // works while the UI is hidden.
 uiToggle.addEventListener("click", () => {
   const hidden = overlayRoot.classList.toggle("ui-hidden");
-  uiToggle.textContent = hidden ? "Show UI" : "Hide UI";
+  uiToggle.textContent = hidden ? "Show" : "Hide";
   uiToggle.setAttribute("aria-pressed", String(hidden));
 });
 
@@ -1923,6 +2121,34 @@ autoFitChk.addEventListener("change", () => {
   sendState();
 });
 
+// The other half of the Tabletop / Life-size pair. Fit-to-surface back on,
+// and if a surface size is known re-fit to it now; otherwise 1:50, which is
+// desk-sized for every bundled plan.
+tabletopBtn.addEventListener("click", () => {
+  autoFit = true;
+  autoFitChk.checked = true;
+  const fitted = placed ? denomToFitSurface() : null;
+  modelDenom = fitted !== null ? fitted : 50;
+  applyModelScale();
+  syncScaleUi();
+  sendState();
+});
+
+function nudgeYaw(deltaDeg) {
+  modelYawDeg = ((modelYawDeg + deltaDeg) % 360 + 360) % 360;
+  applyModelRotation();
+  syncScaleUi();
+  sendState();
+}
+rotL.addEventListener("click", () => nudgeYaw(-15));
+rotR.addEventListener("click", () => nudgeYaw(15));
+
+sheetToggle.addEventListener("click", () => {
+  const collapsed = scalePanel.classList.toggle("collapsed");
+  sheetToggle.innerHTML = collapsed ? "&#8963;" : "&#8964;";
+  sheetToggle.setAttribute("aria-label", collapsed ? "Expand" : "Collapse");
+});
+
 // ---------------------------------------------------------------------
 // Boot
 // ---------------------------------------------------------------------
@@ -1945,7 +2171,6 @@ async function boot() {
     return;
   }
 
-  scalePanel.style.display = "block";
   syncScaleUi();
 
   await checkXrSupport();
