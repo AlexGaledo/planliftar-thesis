@@ -633,15 +633,18 @@ if ("serviceWorker" in navigator && window.isSecureContext) {
     });
   }
 
-  // Which plan to load. Defaults to the hand-authored bungalow: the CubiCasa
-  // sample is a real model output whose segmentation is poor (one merged region
-  // over half the building, 244 wall runs), which makes AR problems impossible
-  // to tell apart from geometry problems. Pass ?plan=cubicasa for that one.
+  // Which plan to load. Defaults to newri-reference: 9 walls (17 once gap
+  // closure has run), the lightest of the bundled plans and the one ar.html
+  // defaults to as well, so both screens show the same building unless you
+  // ask otherwise. Pass ?plan=bungalow for the hand-authored ground truth, or
+  // ?plan=cubicasa for our own pipeline's real export - that one is a poor
+  // segmentation (one merged region over half the building, 244 wall runs),
+  // which makes rendering problems hard to tell apart from geometry ones.
   function planUrl() {
-    const name = new URLSearchParams(location.search).get("plan") || "bungalow";
+    const name = new URLSearchParams(location.search).get("plan") || "newri-reference";
     // Only a bare name is accepted - no slashes, so the query string cannot be
     // used to point the fetch somewhere else.
-    const safe = /^[a-z0-9_-]+$/i.test(name) ? name : "bungalow";
+    const safe = /^[a-z0-9_-]+$/i.test(name) ? name : "newri-reference";
     return `plans/${safe}.json`;
   }
 
@@ -679,7 +682,7 @@ if ("serviceWorker" in navigator && window.isSecureContext) {
   }
 
   function loadFloorplan() {
-    const name = new URLSearchParams(location.search).get("plan") || "bungalow";
+    const name = new URLSearchParams(location.search).get("plan") || "newri-reference";
     fetch(planUrl(), { cache: "no-store" })
       .then((r) => {
         if (!r.ok) throw new Error("HTTP " + r.status);

@@ -390,6 +390,7 @@ if ("serviceWorker" in navigator && window.isSecureContext) {
       <div class="panel hint" id="placeHint">Checking WebXR support&hellip;</div>
       <button id="startBtn" disabled>Start AR</button>
       <button id="placeBtn" style="display:none;">Place here</button>
+      <button id="floorBtn" class="secondary" style="display:none;" disabled>Drop to floor</button>
       <button id="resetBtn" class="secondary" style="display:none;">Reset placement</button>
       <div class="panel muted" id="tapInfo" style="display:none;">&mdash;</div>
 
@@ -492,6 +493,7 @@ const overlayRoot = document.getElementById("overlay");
 const fakePanel = document.getElementById("fakePanel");
 const fakePoseEl = document.getElementById("fakePose");
 const placeBtn = document.getElementById("placeBtn");
+const floorBtn = document.getElementById("floorBtn");
 const tapInfo = document.getElementById("tapInfo");
 const uiToggle = document.getElementById("uiToggle");
 const scalePanel = document.getElementById("scalePanel");
@@ -754,15 +756,19 @@ function localToPlan(localX, localZ) {
   return { x: px, y: py };
 }
 
-// Which plan to load. Defaults to the hand-authored bungalow: the CubiCasa
-// sample is a real model output whose segmentation is poor (one merged region
-// over half the building, 244 wall runs), which makes AR problems impossible
-// to tell apart from geometry problems. Pass ?plan=cubicasa for that one.
+// Which plan to load. Defaults to newri-reference: 9 walls (17 once gap
+// closure has run), and its metadata states pixel_to_meter_ratio 0.01, which
+// is exactly the default ppm of 100 px/m - so it lands at its true 6.0 x 7.7 m
+// without anyone touching the Dimensions panel. Pass ?plan=bungalow for the
+// hand-authored ground truth, or ?plan=cubicasa for our own pipeline's real
+// export - that one is a poor segmentation (one merged region over half the
+// building, 244 wall runs), which makes AR problems hard to tell apart from
+// geometry problems.
 function planUrl() {
-  const name = new URLSearchParams(location.search).get("plan") || "bungalow";
+  const name = new URLSearchParams(location.search).get("plan") || "newri-reference";
   // Only a bare name is accepted - no slashes, so the query string cannot be
   // used to point the fetch somewhere else.
-  const safe = /^[a-z0-9_-]+$/i.test(name) ? name : "bungalow";
+  const safe = /^[a-z0-9_-]+$/i.test(name) ? name : "newri-reference";
   return `plans/${safe}.json`;
 }
 
@@ -1102,12 +1108,29 @@ const camStats = { origin: null, travelM: 0, maxM: 0 };
 // horizontal plane a little below the camera. It is a guess, shown in amber
 // rather than green so it is never mistaken for a real surface reading - but
 // it means you can always place something, on any surface, immediately.
-const FALLBACK_DROP_M = 0.5;    // assumed height of the surface below the camera
+// Only used when the session granted no local-floor, i.e. we have no idea
+// where the floor is. A handheld phone is held at chest-to-eye height, so the
+// floor is far further down than the 0.5 m this used to assume - that guess
+// planted the model at waist height, in mid-air.
+const FALLBACK_DROP_M = 1.4;    // assumed height of the surface below the camera
 const FALLBACK_MIN_M = 0.25;    // clamp the guess to a sane arm's-length range
 const FALLBACK_MAX_M = 2.5;
 const FALLBACK_DEFAULT_M = 0.7; // used when the camera is not pointing downward
 const RETICLE_TRACKED = 0x39f0c0;
 const RETICLE_ESTIMATED = 0xffb020;
+
+// y of the real floor in the current reference space, or null when unknown.
+// A local-floor session puts its origin ON the floor, so 0 is not a guess
+// there - it is the one piece of ground truth the runtime gives us.
+let floorY = null;
+// Height of the most recent TRACKED hit-test result. Hit-testing continues
+// after placement purely to keep this fresh, so "Drop to floor" has a real
+// surface to snap to even if the model was first placed on an estimate.
+let lastTrackedHitY = null;
+// Added on top of every anchor-derived position. The anchor decides where the
+// model is; this is how far we have deliberately moved it off that, and it
+// has to be re-applied every frame or the anchor-follow below would undo it.
+let groundOffsetY = 0;
 
 const SMOOTH_TAU = 0.12;   // seconds to close ~63% of the gap
 const SNAP_M = 0.25;       // corrections beyond this are applied instantly
@@ -1227,6 +1250,7 @@ async function checkXrSupport() {
 startBtn.addEventListener("click", onStartAr);
 resetBtn.addEventListener("click", () => resetPlacementState());
 placeBtn.addEventListener("click", () => tryPlace());
+floorBtn.addEventListener("click", () => dropToFloor());
 
 async function onStartAr() {
   if (!navigator.xr) return;
@@ -1278,12 +1302,18 @@ async function onStartAr() {
         throw e;
       }
     }
+    // A local-floor origin sits ON the floor, so y=0 IS the floor and the
+    // fallback below no longer has to guess. Read it from the space we ended
+    // up with, not from `granted` - the retry above may have downgraded us.
+    floorY = renderer.xr.getReferenceSpaceType?.() === "local-floor"
+      || spaceType === "local-floor" ? 0 : null;
     console.info("[ar] reference space:", renderer.xr.getReferenceSpace() ? spaceType : "none",
-                 "| granted features:", granted);
+                 "| floor y:", floorY, "| granted features:", granted);
 
     startBtn.style.display = "none";
     resetBtn.style.display = "inline-block";
     placeBtn.style.display = "inline-block";
+    floorBtn.style.display = "inline-block";
     tapInfo.style.display = "block";
     xrStatus = "active";
     sendState();
@@ -1321,11 +1351,16 @@ function onSessionEnd() {
   xrSession = null;
   renderer.setAnimationLoop(null);
   xrStatus = "idle";
+  // Both are expressed in the ended session's reference space, so they mean
+  // nothing in the next one.
+  floorY = null;
+  lastTrackedHitY = null;
   resetPlacementState();
   startBtn.style.display = "inline-block";
   startBtn.disabled = false;
   resetBtn.style.display = "none";
   placeBtn.style.display = "none";
+  floorBtn.style.display = "none";
   tapInfo.style.display = "none";
   placeHint.textContent = "AR session ended. Tap Start AR to begin again.";
 }
@@ -1365,7 +1400,11 @@ function estimateReticle() {
   xrCam.getWorldPosition(_estPos);
   _estDir.set(0, 0, -1).applyQuaternion(xrCam.getWorldQuaternion(_estQuat));
 
-  const planeY = _estPos.y - FALLBACK_DROP_M;
+  // Prefer, in order: a real tracked surface we have seen, the session's own
+  // floor, and only then the blind drop below the camera.
+  const planeY = lastTrackedHitY !== null ? lastTrackedHitY
+               : floorY !== null ? floorY
+               : _estPos.y - FALLBACK_DROP_M;
   let t = FALLBACK_DEFAULT_M;
   if (_estDir.y < -0.05) {
     t = (planeY - _estPos.y) / _estDir.y;   // ray-plane intersection
@@ -1528,6 +1567,33 @@ function placeFloorplanAtReticle() {
   sendState();
 }
 
+// Move a placed model down onto the best floor height we know about, and
+// remember the correction so the anchor-follow keeps applying it. The model
+// gets planted in mid-air whenever it is placed on an estimated surface (an
+// invented plane below the camera) rather than a tracked one; this is the
+// escape hatch that does not require re-placing the whole thing.
+//
+// Preference order matches estimateReticle(): a surface ARCore has actually
+// hit beats the session's floor, which beats doing nothing at all.
+function dropToFloor() {
+  if (!placed || !placementGroup) return;
+  const targetY = lastTrackedHitY !== null ? lastTrackedHitY
+                : floorY !== null ? floorY
+                : null;
+  if (targetY === null) {
+    placeHint.textContent =
+      "No floor detected yet - point the camera at the floor for a moment, then try again.";
+    return;
+  }
+  const delta = targetY - placementGroup.position.y;
+  groundOffsetY += delta;
+  placementGroup.position.y = targetY;
+  const src = lastTrackedHitY !== null ? "a detected surface" : "the session floor";
+  placeHint.textContent =
+    `Dropped ${Math.abs(delta * 100).toFixed(0)} cm ${delta < 0 ? "down" : "up"} onto ${src}.`;
+  tapDebug("dropped to floor");
+}
+
 function resetPlacementState() {
   placed = false;
   pendingPlace = false;
@@ -1542,6 +1608,8 @@ function resetPlacementState() {
   camStats.origin = null;
   camStats.travelM = 0;
   camStats.maxM = 0;
+  groundOffsetY = 0;
+  if (floorBtn) floorBtn.disabled = true;
   if (placementGroup) {
     scene.remove(placementGroup);
     disposeGroup(placementGroup);
@@ -1563,50 +1631,64 @@ function onXrFrame(timestamp, frame) {
 
   const refSpace = renderer.xr.getReferenceSpace();
 
-  if (hitTestSource && !placed) {
+  if (hitTestSource) {
     const results = frame.getHitTestResults(hitTestSource);
     if (results.length > 0) {
       const hit = results[0];
       const pose = hit.getPose(refSpace);
-      reticle.visible = true;
-      reticle.matrix.fromArray(pose.transform.matrix);
-      if (reticleEstimated) {
-        reticleEstimated = false;
-        reticle.material.color.setHex(RETICLE_TRACKED);
+      // Recorded on EVERY frame, placed or not: a model planted on an
+      // estimated surface can then be dropped onto the real one as soon as
+      // ARCore finds it, instead of hanging in mid-air for the whole session.
+      if (pose) {
+        lastTrackedHitY = pose.transform.position.y;
+        // A real surface exists now, so the model can be dropped onto it even
+        // if it was first planted on an estimate.
+        if (placed) floorBtn.disabled = false;
       }
 
-      // Measure the surface under the reticle HERE, where `frame` is still
-      // valid, and keep only the resulting number for the tap handler.
-      if (timestamp - lastSurfaceProbeAt > SURFACE_PROBE_MS) {
-        lastSurfaceProbeAt = timestamp;
-        _reticlePos.setFromMatrixPosition(reticle.matrix);
-        try {
-          surfaceExtentAtReticle = surfaceExtentAt(_reticlePos, frame, refSpace);
-        } catch (err) {
-          surfaceExtentAtReticle = null;   // plane-detection not granted
+      // pose can be null on a frame where the hit result cannot be resolved
+      // into the reference space; nothing below is meaningful without it.
+      if (!placed && pose) {
+        reticle.visible = true;
+        reticle.matrix.fromArray(pose.transform.matrix);
+        if (reticleEstimated) {
+          reticleEstimated = false;
+          reticle.material.color.setHex(RETICLE_TRACKED);
         }
-      }
 
-      if (pendingPlace) {
-        pendingPlace = false;
-        try {
-          placeFloorplanAtReticle();
-          tapDebug("placed ok");
-        } catch (err) {
-          appendError("Placement failed: " + ((err && err.stack) || err));
-          tapDebug("threw: " + (err && err.message));
+        // Measure the surface under the reticle HERE, where `frame` is still
+        // valid, and keep only the resulting number for the tap handler.
+        if (timestamp - lastSurfaceProbeAt > SURFACE_PROBE_MS) {
+          lastSurfaceProbeAt = timestamp;
+          _reticlePos.setFromMatrixPosition(reticle.matrix);
+          try {
+            surfaceExtentAtReticle = surfaceExtentAt(_reticlePos, frame, refSpace);
+          } catch (err) {
+            surfaceExtentAtReticle = null;   // plane-detection not granted
+          }
         }
-        // Anchor to the hit result while it is still live. Async, and the
-        // model is already visible - the anchor just takes over drift
-        // correction once it resolves.
-        if (placed && typeof hit.createAnchor === "function") {
-          hit.createAnchor().then(
-            (anchor) => { placementAnchor = anchor; },
-            () => { placementAnchor = null; }   // refused: fall back to static
-          );
+
+        if (pendingPlace) {
+          pendingPlace = false;
+          try {
+            placeFloorplanAtReticle();
+            tapDebug("placed ok");
+          } catch (err) {
+            appendError("Placement failed: " + ((err && err.stack) || err));
+            tapDebug("threw: " + (err && err.message));
+          }
+          // Anchor to the hit result while it is still live. Async, and the
+          // model is already visible - the anchor just takes over drift
+          // correction once it resolves.
+          if (placed && typeof hit.createAnchor === "function") {
+            hit.createAnchor().then(
+              (anchor) => { placementAnchor = anchor; },
+              () => { placementAnchor = null; }   // refused: fall back to static
+            );
+          }
         }
       }
-    } else {
+    } else if (!placed) {
       // Nothing tracked here - fall back to a geometric guess so the user is
       // never stuck waiting for ARCore to find features.
       estimateReticle();
@@ -1655,12 +1737,19 @@ function onXrFrame(timestamp, frame) {
         const t = anchorPose.transform.position;
         _anchorPos.set(t.x, t.y, t.z);
 
+        // Where the model should sit: the anchor, plus however far we have
+        // deliberately moved it off the anchor ("Drop to floor"). Applied
+        // every frame, because the anchor-follow below overwrites position
+        // outright and would otherwise undo the drop on the next frame.
+        _anchorTarget.copy(_anchorPos);
+        _anchorTarget.y += groundOffsetY;
+
         if (anchorStats.origin === null) {
           // First pose: adopt it outright. Easing in from the tap position
           // would make the model drift into place on arrival.
           anchorStats.origin = _anchorPos.clone();
           _prevAnchorPos.copy(_anchorPos);
-          placementGroup.position.copy(_anchorPos);
+          placementGroup.position.copy(_anchorTarget);
         } else {
           // Jitter is measured on the RAW pose, deliberately: comparing
           // against the smoothed position would measure our own damping.
@@ -1669,16 +1758,16 @@ function onXrFrame(timestamp, frame) {
           anchorStats.driftM = _anchorPos.distanceTo(anchorStats.origin);
           _prevAnchorPos.copy(_anchorPos);
 
-          const gap = _anchorPos.distanceTo(placementGroup.position);
+          const gap = _anchorTarget.distanceTo(placementGroup.position);
           if (gap > SNAP_M) {
-            placementGroup.position.copy(_anchorPos);
+            placementGroup.position.copy(_anchorTarget);
             anchorStats.snaps++;
           } else {
             const dt = lastAnchorFrameAt
               ? Math.min(0.1, (timestamp - lastAnchorFrameAt) / 1000)
               : 0;
             const alpha = dt > 0 ? 1 - Math.exp(-dt / SMOOTH_TAU) : 1;
-            placementGroup.position.lerp(_anchorPos, alpha);
+            placementGroup.position.lerp(_anchorTarget, alpha);
           }
         }
         lastAnchorFrameAt = timestamp;
@@ -1714,6 +1803,7 @@ const _estPos = new THREE.Vector3();
 const _estDir = new THREE.Vector3();
 const _estQuat = new THREE.Quaternion();
 const _anchorPos = new THREE.Vector3();
+const _anchorTarget = new THREE.Vector3();
 const _prevAnchorPos = new THREE.Vector3();
 const _camTrack = new THREE.Vector3();
 const _camPos = new THREE.Vector3();
