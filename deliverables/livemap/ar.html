@@ -547,7 +547,7 @@ if ("serviceWorker" in navigator && window.isSecureContext) {
       <div class="muted small" id="planInfo">loading floor plan&hellip;</div>
       <ol>
         <li>Tap <b>Start AR</b> and allow the camera.</li>
-        <li>Point at the floor until a ring appears.</li>
+        <li>Point at the floor and sweep slowly until the ring turns green.</li>
         <li>Tap <b>Place</b>. Then walk.</li>
       </ol>
     </div>
@@ -1510,7 +1510,7 @@ async function onStartAr() {
     setStage("aiming");
     xrStatus = "active";
     sendState();
-    placeHint.textContent = "Point at the floor. When the ring appears, tap Place.";
+    placeHint.textContent = "Point at the floor and sweep slowly. When the ring turns green, tap Place.";
 
     const viewerSpace = await session.requestReferenceSpace("viewer");
     // entityTypes defaults to ["plane"], which means the reticle only appears
@@ -1623,6 +1623,15 @@ function onSelect() {
 function tryPlace() {
   if (placed) { tapDebug("already placed"); return; }
   if (!reticle || !reticle.visible) { tapDebug("no reticle - aim at a surface"); return; }
+  // The amber ring is a guess from the camera angle, made while ARCore has not
+  // mapped the surface yet. A model placed on it rides an untracked world: it
+  // follows the camera, then jumps once tracking catches up. Only a green
+  // (hit-tested) ring gives a surface an anchor can hold on to.
+  if (reticleEstimated) {
+    placeHint.textContent = NOT_TRACKED_HINT;
+    tapDebug("surface not tracked yet");
+    return;
+  }
   pendingPlace = true;
   tapDebug("placing...");
 }
@@ -1800,6 +1809,7 @@ function resetPlacementState() {
   camStats.travelM = 0;
   camStats.maxM = 0;
   groundOffsetY = 0;
+  trackingLost = false;
   if (floorBtn) floorBtn.disabled = true;
   if (placementGroup) {
     scene.remove(placementGroup);
@@ -1811,7 +1821,7 @@ function resetPlacementState() {
   sendState();
   if (xrSession) {
     setStage("aiming");
-    placeHint.textContent = "Point at the floor. When the ring appears, tap Place.";
+    placeHint.textContent = "Point at the floor and sweep slowly. When the ring turns green, tap Place.";
   }
 }
 
@@ -1885,31 +1895,12 @@ function onXrFrame(timestamp, frame) {
       // never stuck waiting for ARCore to find features.
       estimateReticle();
       surfaceExtentAtReticle = null;
+      // The tap was accepted on a green ring, but the surface was lost before
+      // this frame. Never place on the estimate (see tryPlace).
       if (pendingPlace) {
         pendingPlace = false;
-        try {
-          placeFloorplanAtReticle();
-          tapDebug("placed (estimated surface)");
-        } catch (err) {
-          appendError("Placement failed: " + ((err && err.stack) || err));
-        }
-        // There is no hit result to anchor to here, but a free-floating
-        // anchor can still be created from a bare pose - so an estimated
-        // placement gets the same drift correction as a tracked one.
-        if (placed && typeof frame.createAnchor === "function") {
-          try {
-            _estPos.setFromMatrixPosition(reticle.matrix);
-            frame.createAnchor(
-              new XRRigidTransform({ x: _estPos.x, y: _estPos.y, z: _estPos.z }),
-              refSpace
-            ).then(
-              (anchor) => { placementAnchor = anchor; },
-              () => { placementAnchor = null; }
-            );
-          } catch (e) {
-            placementAnchor = null;   // anchors not granted; static placement
-          }
-        }
+        placeHint.textContent = NOT_TRACKED_HINT;
+        tapDebug("surface lost - not placed");
       }
     }
   }
@@ -1968,7 +1959,23 @@ function onXrFrame(timestamp, frame) {
     }
   }
 
-  if (placed && placementGroup) {
+  // Rotation-only tracking. When ARCore loses position (camera pointed at a
+  // blank wall, covered, moved too fast) it keeps reporting orientation but
+  // freezes position (emulatedPosition), so world-locked content appears to
+  // follow the camera. Hide the model and stop streaming pose until real
+  // tracking returns, instead of showing it in the wrong place.
+  const viewerPose = frame.getViewerPose(refSpace);
+  const posLost = !viewerPose || viewerPose.emulatedPosition === true;
+  if (placed && placementGroup && posLost !== trackingLost) {
+    trackingLost = posLost;
+    placementGroup.visible = !posLost;
+    placeHint.textContent = posLost
+      ? "Tracking lost. Point back at where you placed it and move slowly."
+      : "Tracking back. Walk around it, or adjust below.";
+    tapDebug(posLost ? "tracking lost" : "tracking back");
+  }
+
+  if (placed && placementGroup && !trackingLost) {
     maybeSendPose(timestamp);
 
     const xrCam = renderer.xr.getCamera();
@@ -1990,6 +1997,10 @@ function onXrFrame(timestamp, frame) {
 }
 
 let reticleEstimated = false;
+let trackingLost = false;
+const NOT_TRACKED_HINT =
+  "Surface not found yet. Move the phone slowly side to side over the spot " +
+  "until the ring turns green, then tap Place. Plain floors take longer; a rug or textured spot helps.";
 const _reticlePos = new THREE.Vector3();
 const _estPos = new THREE.Vector3();
 const _estDir = new THREE.Vector3();
