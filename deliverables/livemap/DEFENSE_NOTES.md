@@ -82,7 +82,10 @@ appears. Tapping "Place" puts the floor plan there.
 
 If ARCore has not found a surface yet, the page guesses a floor about 1.4
 metres below the camera and shows the ring in amber so nobody mistakes the
-guess for a real reading.
+guess for a real reading. The amber ring is only a pointer: Place works
+only on a green ring. A model placed on a guess sits in a world ARCore has
+not mapped yet, so it follows the camera and then jumps once tracking
+catches up. Plain floors take longer to turn green than a textured table.
 
 **3. Anchors (keep it there)**
 
@@ -251,9 +254,11 @@ The export is unitless. A floor plan image has no scale bar the model can
 trust, so the pipeline refuses to guess and asks for one real dimension.
 
 **What if tracking is lost?**
-The anchor keeps correcting the model when tracking returns. Until then the
-page counts lost frames and falls back to an estimated floor shown in
-amber.
+ARCore then knows which way the phone points but not where it is, so
+anything placed in the world would appear to follow the camera. The page
+hides the model, stops sending position to the live map, and asks the user
+to point back at the spot. When tracking returns, the anchor puts the model
+back where it was.
 
 **Why not GPS?**
 Indoor GPS error is 5 to 10 metres, larger than a room.
