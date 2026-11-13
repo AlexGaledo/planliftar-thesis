@@ -1,0 +1,24 @@
+{
+  "_comment": "Hand-labeled ground truth for a small synthetic 2-room apartment, authored directly as the eval harness's reference set (not derived from CubiCasa or MitUNet output, and not a real scanned plan -- we have no annotated real sample on this machine). Same output shape as the pipeline's rooms/walls contract: rooms are closed polygons, walls are start/end/thickness_px segments.",
+  "canvas": {"width": 200, "height": 100},
+  "rooms": [
+    {
+      "id": "gt_living_room",
+      "type": "living_room",
+      "polygon": [
+        {"x": 10, "y": 10}, {"x": 110, "y": 10}, {"x": 110, "y": 90}, {"x": 10, "y": 90}
+      ]
+    },
+    {
+      "id": "gt_bedroom",
+      "type": "bedroom",
+      "polygon": [
+        {"x": 120, "y": 10}, {"x": 190, "y": 10}, {"x": 190, "y": 90}, {"x": 120, "y": 90}
+      ]
+    }
+  ],
+  "walls": [
+    {"id": "gt_wall_shared", "start": [115, 5], "end": [115, 95], "thickness_px": 10},
+    {"id": "gt_wall_outer_top", "start": [5, 5], "end": [195, 5], "thickness_px": 10}
+  ]
+}
