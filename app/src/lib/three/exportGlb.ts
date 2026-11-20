@@ -10,11 +10,14 @@ import * as THREE from "three";
 import { GLTFExporter } from "three/examples/jsm/exporters/GLTFExporter.js";
 import type { Plan } from "@/lib/plan/types";
 import { buildFloorplanGroup, disposeGroup } from "./buildFloorplanGroup";
+import type { SurfaceTheme } from "./surfaceTheme";
 
 export interface GlbOptions {
   ppm: number;
   wallHeightM: number;
   includeRooms?: boolean;
+  /** defaults to the builder's default theme */
+  theme?: SurfaceTheme;
 }
 
 /** Export any object as binary glTF. */

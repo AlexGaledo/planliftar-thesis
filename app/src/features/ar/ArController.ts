@@ -122,7 +122,7 @@ export class ArController {
   private camera = new THREE.PerspectiveCamera(70, 1, 0.01, 50);
   private reticle: THREE.Mesh<THREE.RingGeometry, THREE.MeshBasicMaterial> | null = null;
   private placementGroup: THREE.Group | null = null;
-  private wallMaterial: THREE.Material | null = null;
+  private wallMaterials: THREE.Material[] = [];
 
   // ---- XR session ----
   private session: XRSession | null = null;
@@ -458,7 +458,7 @@ export class ArController {
     this.autoFit = false;
     this.modelDenom = 1;
     this.wallOpacity = 1;
-    if (this.wallMaterial) applyWallOpacity(this.wallMaterial, 1);
+    this.wallMaterials.forEach((m) => applyWallOpacity(m, 1));
     this.afterChange();
   }
 
@@ -554,7 +554,7 @@ export class ArController {
     const opacity = asNum(patch.wall_opacity);
     if (opacity !== null) {
       this.wallOpacity = clamp(opacity, OPACITY_MIN, OPACITY_MAX);
-      if (this.wallMaterial) applyWallOpacity(this.wallMaterial, this.wallOpacity);
+      this.wallMaterials.forEach((m) => applyWallOpacity(m, this.wallOpacity));
     }
     const yaw = asNum(patch.rotation_deg);
     if (yaw !== null) this.modelYawDeg = wrapDeg(yaw);
@@ -569,7 +569,7 @@ export class ArController {
 
   private buildGroup(): THREE.Group {
     const model = buildFloorplanGroup(this.plan, { ppm: this.ppm, wallHeightM: this.wallHeightM, wallOpacity: this.wallOpacity });
-    this.wallMaterial = model.wallMaterial;
+    this.wallMaterials = model.wallMaterials;
     return model.group;
   }
 

@@ -1,11 +1,12 @@
 /**
- * Wall material, procedural plaster texture and UV scaling.
+ * Procedural plaster texture, UV scaling and wall opacity.
  * Ported from ar.html (makeWallTexture, scaleBoxUVs, applyWallOpacity).
  *
- * Why Lambert + a texture instead of a flat unlit colour: with MeshBasicMaterial
- * every face of every box is the same colour, so at 1:1 the corners vanish. The
- * low-contrast noise also gives ARCore something to track when a wall fills the
- * camera view.
+ * Why a lit material + a texture instead of a flat unlit colour: with
+ * MeshBasicMaterial every face of every box is the same colour, so at 1:1 the
+ * corners vanish. The low-contrast noise also gives ARCore something to track
+ * when a wall fills the camera view. The materials themselves come from the
+ * active SurfaceTheme (surfaceTheme.ts).
  */
 import * as THREE from "three";
 
@@ -14,6 +15,23 @@ const TILES_PER_M = 1.0;
 const TEXTURE_SIZE = 256;
 
 let sharedTexture: THREE.Texture | null = null;
+/** No 2D canvas here (tests): stop asking, the answer will not change. */
+let textureUnavailable = false;
+
+/**
+ * Seeded PRNG (mulberry32). Procedural textures must be identical on every load,
+ * or bake-off screenshots and GLB sizes are not reproducible.
+ */
+export function seededRandom(seed: number): () => number {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
 
 /**
  * The procedural texture, created once and shared. Drawn to a canvas so the app
@@ -22,7 +40,7 @@ let sharedTexture: THREE.Texture | null = null;
  */
 export function getWallTexture(): THREE.Texture | null {
   if (sharedTexture) return sharedTexture;
-  if (typeof document === "undefined") return null;
+  if (textureUnavailable || typeof document === "undefined") return null;
   const canvas = document.createElement("canvas");
   canvas.width = canvas.height = TEXTURE_SIZE;
   let ctx: CanvasRenderingContext2D | null = null;
@@ -31,14 +49,18 @@ export function getWallTexture(): THREE.Texture | null {
   } catch {
     ctx = null;
   }
-  if (!ctx) return null;
+  if (!ctx) {
+    textureUnavailable = true;
+    return null;
+  }
 
   ctx.fillStyle = "#e8e6e1";
   ctx.fillRect(0, 0, TEXTURE_SIZE, TEXTURE_SIZE);
   // fine speckle: plaster tooth
   const img = ctx.getImageData(0, 0, TEXTURE_SIZE, TEXTURE_SIZE);
+  const random = seededRandom(0x5eed);
   for (let i = 0; i < img.data.length; i += 4) {
-    const n = (Math.random() - 0.5) * 18;
+    const n = (random() - 0.5) * 18;
     img.data[i] += n;
     img.data[i + 1] += n;
     img.data[i + 2] += n;
@@ -56,12 +78,12 @@ export function getWallTexture(): THREE.Texture | null {
   const tex = new THREE.CanvasTexture(canvas);
   tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
   tex.anisotropy = 4;
+  tex.colorSpace = THREE.SRGBColorSpace;
+  // Opaque: GLTFExporter writes PNG unless told otherwise, and noise does not
+  // compress as PNG (~190 KB vs ~20 KB as JPEG).
+  tex.userData.mimeType = "image/jpeg";
   sharedTexture = tex;
   return tex;
-}
-
-export function createWallMaterial(texture: THREE.Texture | null): THREE.MeshLambertMaterial {
-  return new THREE.MeshLambertMaterial({ color: 0xffffff, map: texture, side: THREE.FrontSide });
 }
 
 /**

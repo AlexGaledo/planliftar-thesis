@@ -12,7 +12,8 @@
     "lint": "eslint .",
     "format": "prettier --write \"src/**/*.{ts,tsx,css}\"",
     "screenshots": "node scripts/screenshots.mjs",
-    "e2e": "playwright test"
+    "e2e": "playwright test",
+    "bakeoff": "node scripts/bakeoff/run.mjs"
   },
   "dependencies": {
     "@fontsource-variable/archivo": "^5.1.0",
@@ -48,6 +49,7 @@
     "eslint-plugin-react-refresh": "^0.4.16",
     "fake-indexeddb": "^6.0.0",
     "globals": "^15.13.0",
+    "gltf-validator": "^2.0.0-dev.3.10",
     "jsdom": "^25.0.1",
     "playwright-core": "^1.49.0",
     "prettier": "^3.4.2",

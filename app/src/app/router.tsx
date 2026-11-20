@@ -34,6 +34,12 @@ export const router = createBrowserRouter(
       errorElement: <RouteError />,
       lazy: () => import("@/features/ar/ArPage").then((m) => ({ Component: m.ArPage })),
     },
+    // Texture bake-off render target (scripts/bakeoff). Unlinked, no chrome.
+    {
+      path: "/bakeoff",
+      errorElement: <RouteError />,
+      lazy: () => import("@/features/bakeoff/BakeoffPage").then((m) => ({ Component: m.BakeoffPage })),
+    },
   ],
   { future: { v7_relativeSplatPath: true, v7_fetcherPersist: true, v7_normalizeFormMethod: true, v7_partialHydration: true, v7_skipActionErrorRevalidation: true } },
 );

@@ -34,7 +34,7 @@ export function FloorplanScene({ plan, ppm, wallHeightM, showLabels, wallOpacity
   const model = useMemo(() => buildFloorplanGroup(plan, { ppm, wallHeightM, includeRooms: true }), [plan, ppm, wallHeightM]);
   useEffect(() => () => disposeGroup(model.group), [model]);
   // Opacity only touches the material, no rebuild needed.
-  useEffect(() => applyWallOpacity(model.wallMaterial, wallOpacity), [model, wallOpacity]);
+  useEffect(() => model.wallMaterials.forEach((m) => applyWallOpacity(m, wallOpacity)), [model, wallOpacity]);
 
   const labels = useMemo(() => {
     const center = boundsCenter(computeBounds(plan));

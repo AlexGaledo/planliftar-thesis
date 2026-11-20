@@ -1,0 +1,290 @@
+{
+  "theme": "placeholder",
+  "generatedAt": "2026-11-20T20:14:25.438Z",
+  "commit": "8cf745c",
+  "wallHeightM": 2.5,
+  "viewport": {
+    "width": 1280,
+    "height": 800,
+    "dpr": 1,
+    "renderer": "headless Chrome, SwiftShader"
+  },
+  "precache": {
+    "entries": 53,
+    "bytes": 2614181,
+    "kib": 2552.9,
+    "workboxLine": {
+      "entries": 53,
+      "kib": 2548.08
+    }
+  },
+  "plans": {
+    "cubicasa": {
+      "gltf": {
+        "glbBytes": 461760,
+        "materials": 7,
+        "materialNames": [
+          "wall",
+          "skirting",
+          "window_frame",
+          "door",
+          "glass",
+          "slab",
+          "floor_dry"
+        ],
+        "alphaMaterials": 1,
+        "metallicMaterials": 0,
+        "extensionsUsed": [],
+        "meshes": 7,
+        "primitives": 7,
+        "triangles": 6219,
+        "uvSets": 1,
+        "vertexColors": false,
+        "textures": 1,
+        "images": [
+          {
+            "mimeType": "image/jpeg",
+            "bytes": 18284,
+            "h": 256,
+            "w": 256
+          }
+        ],
+        "textureBytesGlb": 18284,
+        "maxTextureDim": 256
+      },
+      "validator": {
+        "validatorVersion": "2.0.0-dev.3.10",
+        "errors": 0,
+        "warnings": 0,
+        "infos": 5,
+        "hints": 0,
+        "messages": []
+      },
+      "sceneViewer": {
+        "pass": true,
+        "problems": []
+      },
+      "render": {
+        "theme": "placeholder",
+        "plan": "cubicasa",
+        "ppm": 100,
+        "wallHeightM": 2.5,
+        "buildMs": 277.2,
+        "firstFrameMs": 388.9,
+        "drawCalls": 7,
+        "triangles": 6219,
+        "textures": 1,
+        "textureGpuBytes": 348652,
+        "openings": [
+          {
+            "id": "door_001",
+            "kind": "door"
+          },
+          {
+            "id": "window_001+window_002",
+            "kind": "window"
+          },
+          {
+            "id": "window_003+window_004",
+            "kind": "window"
+          },
+          {
+            "id": "door_002",
+            "kind": "door"
+          },
+          {
+            "id": "window_005",
+            "kind": "window"
+          },
+          {
+            "id": "door_003+door_004",
+            "kind": "door"
+          },
+          {
+            "id": "door_005+door_006",
+            "kind": "door"
+          },
+          {
+            "id": "window_006",
+            "kind": "window"
+          },
+          {
+            "id": "window_007",
+            "kind": "window"
+          },
+          {
+            "id": "window_008",
+            "kind": "window"
+          },
+          {
+            "id": "door_007+door_008",
+            "kind": "door"
+          }
+        ],
+        "droppedFixtures": []
+      },
+      "screenshots": [
+        "cubicasa-aerial.png",
+        "cubicasa-eye.png",
+        "cubicasa-closeup.png"
+      ],
+      "pageErrors": []
+    },
+    "newri-reference": {
+      "gltf": {
+        "glbBytes": 105004,
+        "materials": 8,
+        "materialNames": [
+          "wall",
+          "skirting",
+          "window_frame",
+          "door",
+          "glass",
+          "slab",
+          "floor_wet",
+          "floor_dry"
+        ],
+        "alphaMaterials": 1,
+        "metallicMaterials": 0,
+        "extensionsUsed": [],
+        "meshes": 8,
+        "primitives": 8,
+        "triangles": 1270,
+        "uvSets": 1,
+        "vertexColors": false,
+        "textures": 1,
+        "images": [
+          {
+            "mimeType": "image/jpeg",
+            "bytes": 18284,
+            "h": 256,
+            "w": 256
+          }
+        ],
+        "textureBytesGlb": 18284,
+        "maxTextureDim": 256
+      },
+      "validator": {
+        "validatorVersion": "2.0.0-dev.3.10",
+        "errors": 0,
+        "warnings": 0,
+        "infos": 6,
+        "hints": 0,
+        "messages": []
+      },
+      "sceneViewer": {
+        "pass": true,
+        "problems": []
+      },
+      "render": {
+        "theme": "placeholder",
+        "plan": "newri-reference",
+        "ppm": 100,
+        "wallHeightM": 2.5,
+        "buildMs": 29.7,
+        "firstFrameMs": 278.6,
+        "drawCalls": 8,
+        "triangles": 1270,
+        "textures": 1,
+        "textureGpuBytes": 348652,
+        "openings": [
+          {
+            "id": "door_001+door_002+door_003",
+            "kind": "door"
+          },
+          {
+            "id": "door_004",
+            "kind": "door"
+          },
+          {
+            "id": "window_001",
+            "kind": "window"
+          },
+          {
+            "id": "window_002",
+            "kind": "window"
+          },
+          {
+            "id": "door_005",
+            "kind": "door"
+          }
+        ],
+        "droppedFixtures": [
+          {
+            "id": "door_006+door_007",
+            "reason": "narrower than 0.3 m after merging"
+          }
+        ]
+      },
+      "screenshots": [
+        "newri-reference-aerial.png",
+        "newri-reference-eye.png",
+        "newri-reference-closeup.png"
+      ],
+      "pageErrors": []
+    },
+    "bungalow": {
+      "gltf": {
+        "glbBytes": 51612,
+        "materials": 5,
+        "materialNames": [
+          "wall",
+          "skirting",
+          "slab",
+          "floor_dry",
+          "floor_wet"
+        ],
+        "alphaMaterials": 0,
+        "metallicMaterials": 0,
+        "extensionsUsed": [],
+        "meshes": 5,
+        "primitives": 5,
+        "triangles": 382,
+        "uvSets": 1,
+        "vertexColors": false,
+        "textures": 1,
+        "images": [
+          {
+            "mimeType": "image/jpeg",
+            "bytes": 18284,
+            "h": 256,
+            "w": 256
+          }
+        ],
+        "textureBytesGlb": 18284,
+        "maxTextureDim": 256
+      },
+      "validator": {
+        "validatorVersion": "2.0.0-dev.3.10",
+        "errors": 0,
+        "warnings": 0,
+        "infos": 3,
+        "hints": 0,
+        "messages": []
+      },
+      "sceneViewer": {
+        "pass": true,
+        "problems": []
+      },
+      "render": {
+        "theme": "placeholder",
+        "plan": "bungalow",
+        "ppm": 100,
+        "wallHeightM": 2.5,
+        "buildMs": 31.6,
+        "firstFrameMs": 279,
+        "drawCalls": 5,
+        "triangles": 382,
+        "textures": 1,
+        "textureGpuBytes": 348652,
+        "openings": [],
+        "droppedFixtures": []
+      },
+      "screenshots": [
+        "bungalow-aerial.png",
+        "bungalow-eye.png"
+      ],
+      "pageErrors": []
+    }
+  }
+}
