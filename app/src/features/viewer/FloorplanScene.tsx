@@ -78,12 +78,18 @@ export function FloorplanScene({ plan, ppm, wallHeightM, showLabels, wallOpacity
   );
 }
 
-/** Place the camera at a 3/4 view proportional to the building, once per size. */
+/**
+ * Place the camera at a 3/4 view proportional to the building. On a tall
+ * (portrait) canvas the horizontal field of view is narrow, so back off by
+ * 1/aspect to keep the whole footprint in frame.
+ */
 function CameraFrame({ size }: { size: number }) {
   const camera = useThree((s) => s.camera);
+  const aspect = useThree((s) => s.size.width / Math.max(1, s.size.height));
   useEffect(() => {
-    camera.position.set(size * 0.6, size * 0.9, size * 1.0);
+    const k = Math.max(1, 1 / aspect) * 1.1;
+    camera.position.set(size * 0.6 * k, size * 0.9 * k, size * 1.0 * k);
     camera.lookAt(0, 0, 0);
-  }, [camera, size]);
+  }, [camera, size, aspect]);
   return null;
 }
