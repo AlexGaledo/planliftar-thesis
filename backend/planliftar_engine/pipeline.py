@@ -80,6 +80,10 @@ def decode_image(image_bytes: bytes, max_side: int):
     Image.MAX_IMAGE_PIXELS = MAX_PIXELS
     try:
         im = Image.open(io.BytesIO(image_bytes))
+        # Image.open reads only the header. Enforce the cap here: Pillow merely
+        # warns (no error) between 1x and 2x MAX_IMAGE_PIXELS.
+        if im.size[0] * im.size[1] > MAX_PIXELS:
+            raise Image.DecompressionBombError(f"{im.size[0]}x{im.size[1]}")
         im = ImageOps.exif_transpose(im)
         if im.mode in ("RGBA", "LA", "P"):
             im = im.convert("RGBA")
