@@ -42,10 +42,9 @@ def main():
 
     out_path = args.out or f"out/planlift_mini_1_{int(args.denom)}.glb"
 
+    # build_glb runs plan_ops.prepare_plan() itself, so any plan schema works
+    # and the thickness-unit fixup that used to live here is gone.
     geo = json.load(open(args.geometry))
-    # Wall thickness in the exported JSON is in plan px; build_glb wants meters.
-    for w in geo["walls"]:
-        w["thickness"] = float(w["thickness"]) / PPM
 
     with tempfile.TemporaryDirectory() as tmp:
         scene = build_glb(geo, pixels_per_meter=PPM, wall_height_m=WALL_HEIGHT,

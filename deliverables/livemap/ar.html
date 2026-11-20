@@ -61,6 +61,13 @@
     tilt the detected plane had. The user can then yaw it deliberately with
     rotation_deg.
 
+    After placement the group's pose is NOT fixed: it is re-derived every
+    frame from the XRAnchor (position AND yaw, tilt dropped) by
+    AnchoredPlacement in ar_core.js, then the user yaw / ground offset /
+    1:N scale are composed on top in applyPlacementPose(). Following only
+    the anchor's position (as an earlier version did) lets ARCore's yaw
+    corrections swing the far walls of a life-size model.
+
     A rotated group is fine for the inverse below: worldToLocal() inverts
     the group's full world matrix, and the yaw derivation already applies
     the inverse group quaternion to the camera forward vector. An earlier
@@ -135,17 +142,28 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <!-- TEMPORARY title, per request. Real name: Live Map AR Bridge. -->
 <title>Sword Art Online</title>
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#111111">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
 <style>
+  /* Same tokens as index.html: dark ground, one mint accent for live/primary
+     things, amber only for "this is a guess" or "needs attention". */
   :root {
     --bg: #0b0e14;
-    --panel: rgba(18, 22, 32, 0.85);
-    --panel-border: rgba(255, 255, 255, 0.08);
+    --panel: rgba(18, 22, 31, 0.86);
+    --panel-solid: rgba(18, 22, 31, 0.72);
+    --panel-border: rgba(255, 255, 255, 0.1);
     --text: #e6e9f0;
-    --muted: #7b8496;
+    --muted: #8a93a6;
     --accent: #39f0c0;
+    --accent-ink: #062e24;
     --ok: #39f0c0;
-    --bad: #ff5f6d;
+    --bad: #8a93a6;
     --warn: #ffb020;
+    --radius: 16px;
+    --safe-b: env(safe-area-inset-bottom, 0px);
+    --safe-t: env(safe-area-inset-top, 0px);
   }
   * { box-sizing: border-box; }
   html, body {
@@ -156,74 +174,72 @@
     background: var(--bg);
     color: var(--text);
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-size: 16px;
+    line-height: 1.4;
     overflow: hidden;
+    -webkit-tap-highlight-color: transparent;
   }
-  #sceneContainer {
+  button, input { font: inherit; color: inherit; }
+  #sceneContainer { position: fixed; inset: 0; }
+  #sceneContainer canvas { display: block; width: 100%; height: 100%; }
+  #overlay { position: fixed; inset: 0; pointer-events: none; }
+  #overlay > * { pointer-events: auto; }
+  .muted { color: var(--muted); }
+  .small { font-size: 13px; }
+
+  /* ---- top bar: one status pill, one hide button ---- */
+  .topbar {
     position: fixed;
-    inset: 0;
-  }
-  #sceneContainer canvas {
-    display: block;
-    width: 100%;
-    height: 100%;
-  }
-  #overlay {
-    position: fixed;
-    inset: 0;
-    pointer-events: none;
-  }
-  #overlay > * {
-    pointer-events: auto;
-  }
-  .panel {
-    background: var(--panel);
-    border: 1px solid var(--panel-border);
-    border-radius: 10px;
-    padding: 10px 14px;
-    font-size: 13px;
-    backdrop-filter: blur(6px);
-    box-shadow: 0 4px 18px rgba(0, 0, 0, 0.35);
-  }
-  .title {
-    position: fixed;
-    top: 14px;
-    left: 14px;
-  }
-  .title b { font-weight: 600; letter-spacing: 0.02em; }
-  .hud {
-    position: fixed;
-    top: 14px;
-    right: 14px;
-    min-width: 170px;
-  }
-  .hud-row {
+    top: calc(12px + var(--safe-t));
+    left: 12px;
+    right: 12px;
     display: flex;
     align-items: center;
+    justify-content: space-between;
     gap: 8px;
-    line-height: 1.5;
+    pointer-events: none;
   }
-  .hud-row + .hud-row { margin-top: 4px; }
+  .topbar > * { pointer-events: auto; }
+  .pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 14px;
+    border-radius: 999px;
+    background: var(--panel);
+    border: 1px solid var(--panel-border);
+    backdrop-filter: blur(8px);
+    font-size: 14px;
+    font-weight: 500;
+  }
   .dot {
-    width: 8px;
-    height: 8px;
+    width: 9px;
+    height: 9px;
     border-radius: 50%;
     flex: none;
     background: var(--bad);
-    box-shadow: 0 0 6px currentColor;
   }
-  .dot.ok { background: var(--ok); color: var(--ok); }
-  .dot.warn { background: var(--warn); color: var(--warn); }
-  .dot.bad { background: var(--bad); color: var(--bad); }
-  .muted { color: var(--muted); }
+  .dot.ok { background: var(--ok); box-shadow: 0 0 8px var(--ok); }
+  .dot.warn { background: var(--warn); }
+  .dot.bad { background: var(--bad); }
+  .icon-btn {
+    min-width: 44px;
+    min-height: 44px;
+    padding: 0 14px;
+    border-radius: 999px;
+    border: 1px solid var(--panel-border);
+    background: var(--panel);
+    backdrop-filter: blur(8px);
+    font-size: 14px;
+    cursor: pointer;
+  }
   .chip {
     display: none;
-    align-items: center;
-    gap: 6px;
     position: fixed;
-    top: 64px;
-    right: 14px;
+    top: calc(64px + var(--safe-t));
+    right: 12px;
     font-size: 11px;
-    letter-spacing: 0.04em;
+    letter-spacing: 0.06em;
     text-transform: uppercase;
     color: #0b0e14;
     background: var(--warn);
@@ -231,113 +247,271 @@
     padding: 4px 10px;
     font-weight: 700;
   }
-  .controls {
+
+  /* ---- bottom: coach line + one big action, then the sheet once placed ---- */
+  .bottom {
     position: fixed;
     left: 0;
     right: 0;
-    bottom: 24px;
+    bottom: 0;
+    padding: 0 12px calc(14px + var(--safe-b));
     display: flex;
     flex-direction: column;
-    align-items: center;
+    align-items: stretch;
     gap: 10px;
   }
-  .hint {
-    max-width: 90%;
+  .coach {
+    align-self: center;
+    max-width: 92%;
     text-align: center;
-  }
-  button {
-    font: inherit;
-    font-weight: 600;
-    font-size: 15px;
-    border: none;
+    padding: 10px 16px;
     border-radius: 999px;
-    padding: 14px 32px;
-    cursor: pointer;
-    color: #0b0e14;
-    background: var(--accent);
-    box-shadow: 0 6px 20px rgba(57, 240, 192, 0.35);
+    background: var(--panel);
+    border: 1px solid var(--panel-border);
+    backdrop-filter: blur(8px);
+    font-size: 15px;
   }
-  button:disabled {
-    background: #3a4150;
+  .coach:empty { display: none; }
+  .actions {
+    display: flex;
+    gap: 10px;
+    justify-content: center;
+    align-items: center;
+  }
+  .btn {
+    min-height: 56px;
+    padding: 14px 28px;
+    border-radius: 999px;
+    border: none;
+    background: var(--accent);
+    color: var(--accent-ink);
+    font-size: 17px;
+    font-weight: 650;
+    cursor: pointer;
+    box-shadow: 0 8px 24px rgba(57, 240, 192, 0.3);
+    flex: 1;
+    max-width: 420px;
+  }
+  .btn:disabled {
+    background: #2a3140;
     color: var(--muted);
     box-shadow: none;
     cursor: not-allowed;
   }
-  button.secondary {
-    background: transparent;
+  .btn.secondary {
+    flex: none;
+    background: var(--panel);
     color: var(--text);
     border: 1px solid var(--panel-border);
-    padding: 8px 18px;
-    font-size: 13px;
     box-shadow: none;
+    font-weight: 500;
+    font-size: 15px;
+    min-height: 48px;
+    padding: 10px 18px;
+    backdrop-filter: blur(8px);
   }
-  .err {
-    position: fixed;
-    bottom: 110px;
-    left: 14px;
-    right: 14px;
-    background: rgba(255, 95, 109, 0.12);
-    border: 1px solid rgba(255, 95, 109, 0.35);
-    color: #ffb3ba;
-    border-radius: 10px;
-    padding: 10px 14px;
-    font-size: 12px;
-    line-height: 1.5;
-    display: none;
-    white-space: pre-line;
-    max-height: 40vh;
+  .btn.secondary:disabled { opacity: 0.4; }
+
+  /* Stage gating. The JS sets data-stage on #overlay; only the elements for
+     that stage are shown. Stages: ready (before AR), aiming (AR running, not
+     placed), placed, fake (?fake=1). */
+  [data-show] { display: none !important; }
+  #overlay[data-stage="ready"]  [data-show~="ready"],
+  #overlay[data-stage="aiming"] [data-show~="aiming"],
+  #overlay[data-stage="placed"] [data-show~="placed"],
+  #overlay[data-stage="fake"]   [data-show~="fake"] { display: revert !important; }
+
+  /* ---- sheet: what most people need after placing ---- */
+  .sheet {
+    background: var(--panel-solid);
+    backdrop-filter: blur(10px);
+    border: 1px solid var(--panel-border);
+    border-radius: var(--radius);
+    padding: 12px 14px 14px;
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.45);
+    max-height: 60vh;
     overflow-y: auto;
   }
-  #fakePanel {
-    display: none;
-    position: fixed;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-    min-width: 260px;
-    text-align: center;
+  .sheet.collapsed > *:not(.sheet-head) { display: none; }
+  .sheet-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    min-height: 32px;
   }
-  /* Sits bottom-right, clear of .title (top-left), .hud (top-right) and
-     .controls (bottom-centre). */
-  .ui-toggle {
-    position: fixed;
-    right: 14px;
-    bottom: 14px;
-    padding: 10px 18px;
-    font-size: 13px;
-    font-weight: 500;
-    color: var(--text);
-    background: var(--panel);
+  .sheet-head b { font-weight: 600; font-size: 15px; }
+  .sheet-head button {
+    min-width: 44px;
+    min-height: 36px;
+    border-radius: 10px;
     border: 1px solid var(--panel-border);
-    box-shadow: none;
-    backdrop-filter: blur(6px);
+    background: transparent;
+    color: var(--muted);
+    cursor: pointer;
   }
-  /* Everything in the overlay goes EXCEPT the toggle - hiding that too would
-     leave no way back into the UI without reloading the page. */
-  #overlay.ui-hidden > *:not(.ui-toggle) { display: none !important; }
-  #overlay.ui-hidden .ui-toggle { opacity: 0.4; }
-
-  #scalePanel { display: none; }
-  #scalePanel .ctl { margin-top: 10px; }
-  #scalePanel label { display: block; font-size: 13px; margin-bottom: 4px; }
-  #scalePanel .row { display: flex; align-items: center; gap: 6px; }
-  #scalePanel input[type="number"] {
-    width: 90px;
-    padding: 6px 8px;
-    border-radius: 6px;
-    border: 1px solid rgba(255,255,255,0.25);
-    background: rgba(0,0,0,0.35);
-    color: inherit;
-    font: inherit;
+  .seg {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 4px;
+    padding: 4px;
+    margin-top: 10px;
+    border-radius: 12px;
+    background: rgba(0, 0, 0, 0.35);
+    border: 1px solid var(--panel-border);
   }
-  #scalePanel input[type="range"] { width: 100%; }
-  #scalePanel .chk { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
-  #scalePanel .chk input { width: auto; }
-  #scaleReadout {
+  .seg button {
+    min-height: 48px;
+    border: none;
+    border-radius: 9px;
+    background: transparent;
+    color: var(--muted);
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .seg button.active { background: var(--accent); color: var(--accent-ink); }
+  .seg small { display: block; font-weight: 400; font-size: 11px; opacity: 0.8; }
+  .field { display: flex; flex-direction: column; gap: 6px; margin-top: 12px; }
+  .field label { font-size: 14px; }
+  .field .hint { font-size: 12px; color: var(--muted); }
+  .with-unit { position: relative; }
+  .with-unit input { padding-right: 36px; }
+  .with-unit .unit {
+    position: absolute;
+    right: 12px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: var(--muted);
+    pointer-events: none;
+  }
+  .field input[type="number"] {
+    width: 100%;
+    min-height: 44px;
+    padding: 8px 12px;
+    border-radius: 10px;
+    border: 1px solid var(--panel-border);
+    background: rgba(0, 0, 0, 0.35);
+  }
+  .field input[type="range"] { width: 100%; accent-color: var(--accent); }
+  .rotate {
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
+    align-items: center;
+    gap: 8px;
+    margin-top: 12px;
+  }
+  .rotate button {
+    min-height: 44px;
+    border-radius: 10px;
+    border: 1px solid var(--panel-border);
+    background: rgba(255, 255, 255, 0.05);
+    cursor: pointer;
+    font-size: 15px;
+  }
+  .rotate .val { text-align: center; font-size: 14px; color: var(--muted); min-width: 56px; }
+  .check {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 12px;
+    font-size: 14px;
+  }
+  .check input { width: 20px; height: 20px; accent-color: var(--accent); }
+  details.adv { margin-top: 12px; }
+  details.adv summary {
+    cursor: pointer;
+    color: var(--muted);
+    font-size: 13px;
+    list-style: none;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 32px;
+    user-select: none;
+  }
+  details.adv summary::-webkit-details-marker { display: none; }
+  details.adv summary::before {
+    content: "";
+    width: 6px;
+    height: 6px;
+    border-right: 1.5px solid currentColor;
+    border-bottom: 1.5px solid currentColor;
+    transform: rotate(-45deg);
+    transition: transform 0.15s;
+  }
+  details.adv[open] summary::before { transform: rotate(45deg); }
+  .mono {
     margin-top: 8px;
     font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
     font-size: 12px;
-    line-height: 1.45;
+    line-height: 1.5;
+    color: var(--muted);
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+
+  /* ---- ready card ---- */
+  .ready-card {
+    position: fixed;
+    left: 16px;
+    right: 16px;
+    top: 50%;
+    transform: translateY(-58%);
+    padding: 22px 20px;
+    border-radius: var(--radius);
+    background: var(--panel-solid);
+    backdrop-filter: blur(10px);
+    border: 1px solid var(--panel-border);
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.45);
+    text-align: center;
+  }
+  .ready-card h1 { margin: 0 0 4px; font-size: 22px; font-weight: 700; }
+  .ready-card ol {
+    text-align: left;
+    margin: 14px auto 0;
+    padding-left: 22px;
+    color: var(--muted);
+    font-size: 15px;
+    max-width: 320px;
+  }
+  .ready-card ol li + li { margin-top: 6px; }
+
+  /* ---- problems ---- */
+  .err {
+    position: fixed;
+    top: calc(64px + var(--safe-t));
+    left: 12px;
+    right: 12px;
+    background: rgba(255, 176, 32, 0.12);
+    border: 1px solid rgba(255, 176, 32, 0.45);
+    color: #ffd48a;
+    border-radius: 12px;
+    padding: 10px 14px;
+    font-size: 13px;
+    line-height: 1.5;
+    display: none;
+    white-space: pre-line;
+    max-height: 32vh;
+    overflow-y: auto;
+  }
+
+  /* Hiding the UI. Everything in the overlay goes EXCEPT the top bar's
+     toggle - hiding that too would leave no way back without reloading. */
+  #overlay.ui-hidden > *:not(.topbar) { display: none !important; }
+  #overlay.ui-hidden .topbar .pill { display: none; }
+  #overlay.ui-hidden .icon-btn { opacity: 0.5; }
+
+  #fakePanel {
+    position: fixed;
+    top: 50%;
+    left: 16px;
+    right: 16px;
+    transform: translateY(-50%);
+    text-align: center;
+    padding: 18px;
+    border-radius: var(--radius);
+    background: var(--panel-solid);
+    border: 1px solid var(--panel-border);
   }
   #fakePanel .pose {
     margin-top: 8px;
@@ -346,80 +520,130 @@
     color: var(--accent);
   }
 </style>
+<script>
+// PWA registration. Guarded on isSecureContext because a service worker
+// will not register on an origin whose certificate Chrome distrusts - and
+// an unguarded call there throws in the console and looks like a bug in
+// this page rather than a trust problem. Failure is non-fatal: everything
+// works without it, you just lose offline and the install prompt.
+if ("serviceWorker" in navigator && window.isSecureContext) {
+  window.addEventListener("load", function () {
+    navigator.serviceWorker.register("sw.js").catch(function (e) {
+      console.info("[pwa] service worker not registered:", e && e.message);
+    });
+  });
+}
+</script>
 </head>
 <body>
   <div id="sceneContainer"></div>
 
-  <div id="overlay">
-    <div class="panel title">
-      <b>Sword Art Online</b>
-      <div class="muted" id="planInfo">loading floorplan&hellip;</div>
+  <div id="overlay" data-stage="ready">
+    <div class="topbar">
+      <span class="pill"><span class="dot bad" id="wsDot"></span><span id="wsStatus">Connecting&hellip;</span></span>
+      <button id="uiToggle" class="icon-btn" type="button">Hide</button>
     </div>
 
-    <div class="panel hud">
-      <div class="hud-row">
-        <span class="dot bad" id="wsDot"></span>
-        <span id="wsStatus">Connecting&hellip;</span>
-      </div>
-      <div class="hud-row">
-        <span class="muted" id="placedStatus">Not placed</span>
-      </div>
-    </div>
-
-    <div class="chip" id="fakeChip">Fake mode</div>
-
-    <div class="controls">
-      <div class="panel hint" id="placeHint">Checking WebXR support&hellip;</div>
-      <button id="startBtn" disabled>Start AR</button>
-      <button id="placeBtn" style="display:none;">Place here</button>
-      <button id="resetBtn" class="secondary" style="display:none;">Reset placement</button>
-      <div class="panel muted" id="tapInfo" style="display:none;">&mdash;</div>
-
-      <div class="panel" id="scalePanel">
-        <b>Dimensions</b>
-        <div class="ctl">
-          <label for="realSizeInput">Longest side of the real building</label>
-          <div class="row">
-            <input id="realSizeInput" type="number" min="0.5" max="500" step="0.1">
-            <span class="muted">m</span>
-          </div>
-        </div>
-        <div class="ctl">
-          <label for="denomSlider">Model scale &mdash; 1:<span id="denomOut">50</span></label>
-          <input id="denomSlider" type="range" min="5" max="200" step="1" value="50">
-        </div>
-        <div class="ctl">
-          <label for="yawSlider">Rotation &mdash; <span id="yawOut">0</span>&deg;</label>
-          <input id="yawSlider" type="range" min="0" max="359" step="1" value="0">
-        </div>
-        <label class="chk">
-          <input id="autoFitChk" type="checkbox" checked>
-          <span>Fit to the surface I tap</span>
-        </label>
-        <div class="muted" id="scaleReadout">&mdash;</div>
-      </div>
-    </div>
-
-    <button id="uiToggle" class="ui-toggle">Hide UI</button>
+    <div class="chip" id="fakeChip">Test mode</div>
 
     <div class="panel err" id="errBox"></div>
 
-    <div class="panel" id="fakePanel">
-      <b>Fake walking loop</b>
-      <div class="muted">?fake=1 debug mode - no WebXR, streaming synthetic poses</div>
+    <!-- READY: what this is and what to do, nothing else -->
+    <div class="ready-card" data-show="ready">
+      <h1>PlanLift AR</h1>
+      <div class="muted small" id="planInfo">loading floor plan&hellip;</div>
+      <ol>
+        <li>Tap <b>Start AR</b> and allow the camera.</li>
+        <li>Point at the floor and sweep slowly until the ring turns green.</li>
+        <li>Tap <b>Place</b>. Then walk.</li>
+      </ol>
+    </div>
+
+    <div class="bottom">
+      <div class="coach" id="placeHint">Checking this phone&hellip;</div>
+
+      <div class="actions">
+        <button id="startBtn" class="btn" data-show="ready" disabled>Start AR</button>
+        <button id="placeBtn" class="btn" data-show="aiming">Place</button>
+      </div>
+
+      <!-- PLACED: the sheet. Three things most people touch, rest in Advanced. -->
+      <div class="sheet" id="scalePanel" data-show="placed">
+        <div class="sheet-head">
+          <b id="placedStatus">Placed</b>
+          <div>
+            <button id="reanchorBtn" type="button" title="Point at the floor near you, then tap: re-locks the model to a spot close to you without moving it">Re-anchor</button>
+            <button id="resetBtn" type="button" title="Place the model again">Start over</button>
+            <button id="sheetToggle" type="button" aria-label="Collapse">&#8964;</button>
+          </div>
+        </div>
+
+        <div class="seg" role="group" aria-label="Model size">
+          <button type="button" id="tabletopBtn">Tabletop<small>fits on a desk</small></button>
+          <button type="button" id="walkthroughBtn">Life-size<small>walk through it</small></button>
+        </div>
+
+        <div class="field">
+          <label for="realSizeInput">Building length</label>
+          <div class="with-unit">
+            <input id="realSizeInput" type="number" min="0.5" max="500" step="0.1" inputmode="decimal">
+            <span class="unit">m</span>
+          </div>
+          <div class="hint">Longest side of the real building. Sets how big everything is.</div>
+        </div>
+
+        <div class="rotate">
+          <button type="button" id="rotL">&#8634; 15&deg;</button>
+          <div class="val"><span id="yawOut">0</span>&deg;</div>
+          <button type="button" id="rotR">&#8635; 15&deg;</button>
+        </div>
+
+        <details class="adv">
+          <summary>Advanced</summary>
+          <div class="field">
+            <label for="denomSlider">Model scale &middot; 1:<span id="denomOut">50</span></label>
+            <input id="denomSlider" type="range" min="1" max="200" step="1" value="50">
+          </div>
+          <div class="field">
+            <label for="yawSlider">Rotation &middot; fine</label>
+            <input id="yawSlider" type="range" min="0" max="359" step="1" value="0">
+          </div>
+          <label class="check">
+            <input id="autoFitChk" type="checkbox" checked>
+            <span>Fit the model to the surface I tap</span>
+          </label>
+          <button id="floorBtn" class="btn secondary" type="button" style="margin-top:12px; width:100%;" disabled>Drop onto the floor</button>
+          <div class="mono" id="scaleReadout">&mdash;</div>
+          <div class="mono" id="tapInfo">&mdash;</div>
+        </details>
+      </div>
+    </div>
+
+    <div id="fakePanel" data-show="fake">
+      <b>Test mode</b>
+      <div class="muted small">No camera. Streaming a scripted walking loop to the map.</div>
       <div class="pose" id="fakePose">&mdash;</div>
     </div>
   </div>
 
+<script src="plan_ops.js"></script>
 <script type="importmap">
 {
   "imports": {
-    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js"
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
   }
 }
 </script>
 <script type="module">
 import * as THREE from "three";
+import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
+// World-locking core (anchor follow, tracking + surface gating). Shared with
+// the React port - see the header of ar_core.js and docs/research/AR_ANCHORING.md.
+import {
+  sessionInit, requestHitTestSources, TrackingMonitor, SurfaceGate,
+  AnchoredPlacement, composeModelMatrix,
+} from "./ar_core.js";
 
 "use strict";
 
@@ -431,11 +655,13 @@ import * as THREE from "three";
 let ppm = 100;              // plan px per real-world meter (user-editable)
 let modelDenom = 50;        // miniature factor: model renders at 1:modelDenom
 let autoFit = true;         // fit the miniature to the surface that was tapped
-const DENOM_MIN = 5;
+const DENOM_MIN = 1;   // 1:1 = walkthrough scale; below 1 the model would
+                       // be larger than the real building it represents
 const DENOM_MAX = 200;
 const SURFACE_FILL = 0.8;   // fit-to-surface leaves a 20% margin all round
 let wallHeightM = 2.5;      // real-world wall height, m
-let wallOpacity = 0.35;     // wall material opacity
+let wallOpacity = 1.0;      // wall material opacity (1 = solid, and the
+                            // material goes fully opaque with depth writes)
 let modelYawDeg = 0;        // yaw of the placed model, degrees clockwise from above
 const HEIGHT_MIN = 0.1, HEIGHT_MAX = 10;
 const OPACITY_MIN = 0.05, OPACITY_MAX = 1;
@@ -467,6 +693,7 @@ const overlayRoot = document.getElementById("overlay");
 const fakePanel = document.getElementById("fakePanel");
 const fakePoseEl = document.getElementById("fakePose");
 const placeBtn = document.getElementById("placeBtn");
+const floorBtn = document.getElementById("floorBtn");
 const tapInfo = document.getElementById("tapInfo");
 const uiToggle = document.getElementById("uiToggle");
 const scalePanel = document.getElementById("scalePanel");
@@ -476,7 +703,20 @@ const denomOut = document.getElementById("denomOut");
 const yawSlider = document.getElementById("yawSlider");
 const yawOut = document.getElementById("yawOut");
 const autoFitChk = document.getElementById("autoFitChk");
+const walkthroughBtn = document.getElementById("walkthroughBtn");
 const scaleReadout = document.getElementById("scaleReadout");
+const tabletopBtn = document.getElementById("tabletopBtn");
+const rotL = document.getElementById("rotL");
+const rotR = document.getElementById("rotR");
+const sheetToggle = document.getElementById("sheetToggle");
+const reanchorBtn = document.getElementById("reanchorBtn");
+
+// UI stages. The CSS shows only the elements tagged for the current stage
+// (data-show="..."), so the page presents one decision at a time instead of
+// every control at once: ready -> aiming -> placed, or fake for ?fake=1.
+function setStage(stage) {
+  overlayRoot.dataset.stage = stage;
+}
 
 // Without these, an exception thrown inside an XR event callback or a
 // rejected promise disappears entirely - the page just appears to ignore
@@ -642,7 +882,7 @@ function applyControlPatch(patch) {
   const opacity = asNum(patch.wall_opacity);
   if (opacity !== null) {
     wallOpacity = clamp(opacity, OPACITY_MIN, OPACITY_MAX);
-    if (wallMaterial) wallMaterial.opacity = wallOpacity;
+    if (wallMaterial) applyWallOpacity(wallMaterial, wallOpacity);
   }
 
   const yaw = asNum(patch.rotation_deg);
@@ -728,29 +968,42 @@ function localToPlan(localX, localZ) {
   return { x: px, y: py };
 }
 
-// Which plan to load. Defaults to the hand-authored bungalow: the CubiCasa
-// sample is a real model output whose segmentation is poor (one merged region
-// over half the building, 244 wall runs), which makes AR problems impossible
-// to tell apart from geometry problems. Pass ?plan=cubicasa for that one.
+// Which plan to load. Defaults to newri-reference: 9 walls (17 once gap
+// closure has run), and its metadata states pixel_to_meter_ratio 0.01, which
+// is exactly the default ppm of 100 px/m - so it lands at its true 6.0 x 7.7 m
+// without anyone touching the Dimensions panel. Pass ?plan=bungalow for the
+// hand-authored ground truth, or ?plan=cubicasa for our own pipeline's real
+// export - that one is a poor segmentation (one merged region over half the
+// building, 244 wall runs), which makes AR problems hard to tell apart from
+// geometry problems.
 function planUrl() {
-  const name = new URLSearchParams(location.search).get("plan") || "bungalow";
+  const name = new URLSearchParams(location.search).get("plan") || "newri-reference";
   // Only a bare name is accepted - no slashes, so the query string cannot be
   // used to point the fetch somewhere else.
-  const safe = /^[a-z0-9_-]+$/i.test(name) ? name : "bungalow";
+  const safe = /^[a-z0-9_-]+$/i.test(name) ? name : "newri-reference";
   return `plans/${safe}.json`;
 }
+
+// normalizePlan() and closeWallGaps() live in plan_ops.js, loaded as a
+// classic script above so index.html (classic) and this module can share
+// one copy. deliverables/plan_ops.py is the reference implementation and
+// local/test_plan_ops_parity.py fails if the two drift.
 
 async function loadFloorplan() {
   const res = await fetch(planUrl(), { cache: "no-store" });
   if (!res.ok) throw new Error("HTTP " + res.status);
-  const data = await res.json();
+  // ?gaps=off renders newri's raw disconnected segments, for comparison.
+  const data = PlanOps.preparePlan(await res.json(),
+                                   { closeGaps: params.get("gaps") !== "off" });
   planData = data;
   planBoundsPx = computeFootprintBounds(data);
   planOffsetPx = { x: (planBoundsPx.minX + planBoundsPx.maxX) / 2,
                    y: (planBoundsPx.minY + planBoundsPx.maxY) / 2 };
   const wallCount = (data.walls || []).length;
   const roomCount = (data.rooms || []).length;
-  planInfoEl.textContent = `${wallCount} walls, ${roomCount} rooms`;
+  const filled = (data.walls || []).filter((w) => w.generated).length;
+  planInfoEl.textContent = `${wallCount} walls, ${roomCount} rooms`
+    + (filled ? ` (+${filled} gap fills)` : "");
   // "record the px offset used" (per spec) - logged once at load time.
   console.info(
     "[ar] plan footprint center (px), used as the recentering offset:",
@@ -760,23 +1013,149 @@ async function loadFloorplan() {
 }
 
 let wallMaterial = null;
+let wallTexture = null;
+
+// Procedural wall surface, drawn to a canvas so the page stays self-contained
+// (no image request, works offline and behind the CSP the artifact viewer
+// applies). MeshBasicMaterial is unlit: every face of every box returns the
+// same flat colour, so at 1:1 the corners vanish and a wall reads as a
+// coloured slab rather than a surface. Lambert plus a hemisphere light gives
+// each face a different value, which is what makes an edge look like an edge.
+//
+// The noise is deliberately low-contrast. Its job is to break the flat fill so
+// the eye reads "plaster" and, more usefully, so it gives ARCore something to
+// track against on camera when the model fills the frame.
+function makeWallTexture() {
+  const S = 256;
+  const cv = document.createElement("canvas");
+  cv.width = cv.height = S;
+  const c = cv.getContext("2d");
+
+  c.fillStyle = "#e8e6e1";
+  c.fillRect(0, 0, S, S);
+
+  // fine speckle - plaster tooth
+  const img = c.getImageData(0, 0, S, S);
+  const px = img.data;
+  for (let i = 0; i < px.length; i += 4) {
+    const n = (Math.random() - 0.5) * 18;
+    px[i] += n; px[i + 1] += n; px[i + 2] += n;
+  }
+  c.putImageData(img, 0, 0);
+
+  // faint horizontal courses, one per texture tile = one per metre once the
+  // UVs below are scaled, so they read as a real-world size cue when you walk
+  // up to a wall instead of as an arbitrary pattern
+  c.strokeStyle = "rgba(0,0,0,0.06)";
+  c.lineWidth = 1;
+  for (let y = 0; y <= S; y += S / 4) {
+    c.beginPath(); c.moveTo(0, y + 0.5); c.lineTo(S, y + 0.5); c.stroke();
+  }
+
+  const tex = new THREE.CanvasTexture(cv);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.anisotropy = 4;
+  return tex;
+}
+
+// BoxGeometry gives every face UVs of 0..1, so a 6 m wall and a 0.3 m stub
+// get the same single tile and the texture stretches by 20x on one and not
+// the other. Rescale each face's UVs by its own real size instead, at
+// TILES_PER_M tiles per metre, so texel density is identical everywhere.
+//
+// Vertex order is BoxGeometry's own: 4 vertices per face, faces in the order
+// +x, -x, +y, -y, +z, -z. The box here is built as (thickness, height,
+// length), so +x/-x are the two long wall faces, +y/-y the top and bottom,
+// and +z/-z the end caps.
+const TILES_PER_M = 1.0;
+function scaleBoxUVs(geom, thickness, height, length) {
+  const faceUV = [
+    [length, height],      // +x  long face
+    [length, height],      // -x  long face
+    [thickness, length],   // +y  top
+    [thickness, length],   // -y  bottom
+    [thickness, height],   // +z  end cap
+    [thickness, height],   // -z  end cap
+  ];
+  const uv = geom.attributes.uv;
+  // 4 verts x 6 faces. A segmented box would break the indexing above, so
+  // bail rather than scramble the UVs on a geometry this was not written for.
+  if (!uv || uv.count !== 24) return;
+  for (let f = 0; f < 6; f++) {
+    const su = faceUV[f][0] * TILES_PER_M;
+    const sv = faceUV[f][1] * TILES_PER_M;
+    for (let v = 0; v < 4; v++) {
+      const i = f * 4 + v;
+      uv.setXY(i, uv.getX(i) * su, uv.getY(i) * sv);
+    }
+  }
+  uv.needsUpdate = true;
+}
+
+// Opacity below 1 has to switch the material into transparent mode AND turn
+// depth writes off, or translucent walls occlude each other in draw order and
+// the far side of the building disappears. At exactly 1 both go the other
+// way, which is what makes a wall look solid rather than like tinted glass.
+function applyWallOpacity(material, opacity) {
+  const solid = opacity >= 0.99;
+  material.opacity = opacity;
+  material.transparent = !solid;
+  material.depthWrite = solid;
+  // Back faces are invisible in a solid wall, so cull them and shade half the
+  // fragments. Once the walls are see-through you are looking at the inside of
+  // the far face, so they have to come back - the fill-rate saving only exists
+  // in the mode that does not need them.
+  material.side = solid ? THREE.FrontSide : THREE.DoubleSide;
+  material.needsUpdate = true;
+}
 
 function buildFloorplanGroup(data) {
   const group = new THREE.Group();
   group.name = "floorplan";
 
+  if (!wallTexture) wallTexture = makeWallTexture();
+
   // Held in a module-level ref so a wall_opacity control patch can change it
   // without rebuilding 240-odd box meshes.
-  const material = new THREE.MeshBasicMaterial({
-    color: 0x5ac8ea,
-    transparent: true,
-    opacity: wallOpacity,
-    side: THREE.DoubleSide,
-    depthWrite: false, // translucent boxes: let far walls show through near ones
+  const material = new THREE.MeshLambertMaterial({
+    color: 0xffffff,
+    map: wallTexture,
+    // side is set by applyWallOpacity below: FrontSide while the walls are
+    // solid (nothing can see a back face), DoubleSide once they are not.
+    side: THREE.FrontSide,
   });
+  applyWallOpacity(material, wallOpacity);
+
+  // One box per wall used to mean one draw call per wall - 244 of them on the
+  // `cubicasa` plan, which is what made the page crawl on a phone. The boxes
+  // all share one material and never move relative to each other, so their
+  // transforms are baked into the vertices here and the lot is merged into a
+  // single geometry: 244 draw calls -> 1.
+  const wallGeoms = [];
+  const UP = new THREE.Vector3(0, 1, 0);
+  const _m = new THREE.Matrix4();
+  const _q = new THREE.Quaternion();
+  const _s = new THREE.Vector3(1, 1, 1);
+
+  // The v1 export emits a wall for each side of some shared boundaries, so 36
+  // of the `cubicasa` plan's 244 walls are the same box entered end-for-end.
+  // Two coincident boxes shade every fragment twice and their faces z-fight
+  // into a shimmer as you move. Key on the unordered endpoint pair so A->B and
+  // B->A collapse to one (exact-duplicate only - near-coincident walls that
+  // round to different pixels are left alone). Render-side only: `data` is
+  // untouched, so the pose stream, the plan schema and plan_ops.js parity are
+  // all unaffected.
+  const seenWalls = new Set();
+  const key1 = (w) => `${Math.round(w.start.x)},${Math.round(w.start.y)}`;
+  const key2 = (w) => `${Math.round(w.end.x)},${Math.round(w.end.y)}`;
 
   (data.walls || []).forEach((w) => {
     if (!w.start || !w.end) return;
+    const a = key1(w), b = key2(w);
+    const k = (a < b ? a + "|" + b : b + "|" + a)
+      + "|" + Math.round((w.thickness || 4) * 10);
+    if (seenWalls.has(k)) return;
+    seenWalls.add(k);
     const p1 = planToLocal(w.start.x, w.start.y);
     const p2 = planToLocal(w.end.x, w.end.y);
     const delta = new THREE.Vector3().subVectors(p2, p1);
@@ -784,17 +1163,32 @@ function buildFloorplanGroup(data) {
     const thicknessM = Math.max(0.02, (w.thickness || 4) / ppm);
 
     const geom = new THREE.BoxGeometry(thicknessM, wallHeightM, length);
-    const mesh = new THREE.Mesh(geom, material);
+    scaleBoxUVs(geom, thicknessM, wallHeightM, length);
 
     const mid = new THREE.Vector3().addVectors(p1, p2).multiplyScalar(0.5);
-    mesh.position.set(mid.x, wallHeightM / 2, mid.z);
     // Align the box's local +Z ("length" axis) with delta - same
     // atan2(dx, dz) form as the yaw formula below, since both rotate a
     // +Z-forward vector to point along a direction in the XZ plane.
-    mesh.rotation.y = Math.atan2(delta.x, delta.z);
+    _q.setFromAxisAngle(UP, Math.atan2(delta.x, delta.z));
+    _m.compose(new THREE.Vector3(mid.x, wallHeightM / 2, mid.z), _q, _s);
+    geom.applyMatrix4(_m);
 
-    group.add(mesh);
+    wallGeoms.push(geom);
   });
+  if (wallGeoms.length) {
+    // All inputs are BoxGeometry with identical attributes, so this cannot
+    // realistically return null - but if it ever did, fall back to the
+    // one-mesh-per-wall form rather than dropping the walls entirely.
+    const merged = mergeGeometries(wallGeoms, false);
+    if (merged) {
+      wallGeoms.forEach((g) => g.dispose());
+      const mesh = new THREE.Mesh(merged, material);
+      mesh.name = "walls";
+      group.add(mesh);
+    } else {
+      wallGeoms.forEach((g) => group.add(new THREE.Mesh(g, material)));
+    }
+  }
   wallMaterial = material;
 
   // Slab at group-local y=0, i.e. flush with the surface that was tapped.
@@ -803,12 +1197,16 @@ function buildFloorplanGroup(data) {
   const slabW = planBoundsPx.widthPx / ppm;
   const slabD = planBoundsPx.heightPx / ppm;
   if (slabW > 0 && slabD > 0) {
+    const slabGeom = new THREE.BoxGeometry(slabW * 1.04, 0.02, slabD * 1.04);
+    scaleBoxUVs(slabGeom, slabW * 1.04, 0.02, slabD * 1.04);
     const slab = new THREE.Mesh(
-      new THREE.BoxGeometry(slabW * 1.04, 0.02, slabD * 1.04),
-      new THREE.MeshBasicMaterial({
-        color: 0x0e2630,
-        transparent: true,
-        opacity: 0.55,
+      slabGeom,
+      // At 1:1 this is the floor you are standing on, so it is opaque and
+      // lit like the walls - a translucent slab under your feet reads as a
+      // hole and gives the eye nothing to judge distance against.
+      new THREE.MeshLambertMaterial({
+        color: 0x9a9a9a,
+        map: wallTexture,
         side: THREE.DoubleSide,
       })
     );
@@ -828,10 +1226,8 @@ function buildFloorplanGroup(data) {
 function startFakeMode() {
   xrStatus = "fake";
   fakeChip.style.display = "inline-flex";
-  fakePanel.style.display = "block";
-  startBtn.style.display = "none";
-  resetBtn.style.display = "none";
-  placeHint.textContent = "Fake mode: streaming a scripted walking loop, no WebXR.";
+  setStage("fake");
+  placeHint.textContent = "Test mode: sending a scripted walk to the map.";
 
   connectWs();
 
@@ -882,55 +1278,53 @@ let lastSendAt = 0;
 //
 // So the surface measurement happens inside the frame callback, and only the
 // resulting NUMBER (metres) is cached for the tap handler to use.
-let placementAnchor = null;   // XRAnchor, when the device grants "anchors"
-// Anchor telemetry. "anchor: yes" only proves an XRAnchor object exists; it
-// says nothing about whether the runtime is still tracking it or how much it
-// is moving. These numbers separate the three ways this can look unstable:
-//   drift  - anchor pose steadily walking away from where it was created
-//            (re-localisation; the anchor is doing its job, the map moved)
-//   jitter - anchor pose twitching frame to frame (poor tracking quality:
-//            low texture, low light, or a featureless surface)
-//   untracked - runtime lost the anchor, so nothing is correcting anything
-const anchorStats = { updates: 0, untracked: 0, driftM: 0, jitterM: 0, snaps: 0, origin: null };
-let lastAnchorFrameAt = 0;
 
-// Camera travel since placement. This distinguishes the one failure that no
-// amount of anchoring can fix: a runtime tracking only ROTATION (3-DOF).
-// Under 3-DOF the reported camera position barely changes however far you
-// actually walk, so world-locked content appears to travel with you - which
-// looks exactly like "it follows me a little". If you walk a metre and
-// camTravel reads a few cm, the tracking never saw the movement, and the
-// model is faithfully world-locked to a world that is not moving.
+// ---- World locking. The logic lives in ar_core.js; see its header. ----
+// placement: follows an XRAnchor every frame (position AND yaw), or holds a
+//            fixed world matrix when the device cannot anchor.
+// tracking:  6-DoF vs rotation-only / lost. Never show or place a model while
+//            this is not "ok" - it would follow the camera.
+// gate:      surface quality under the reticle. Place only when "good".
+const placement = new AnchoredPlacement({ snapM: 0.25 });
+const tracking = new TrackingMonitor();
+const gate = new SurfaceGate({ stableFrames: 12, stableM: 0.03, minTravelM: 0.3 });
+let previewHitTestSource = null;  // planes + feature points, reticle only
+let anchorsGranted = null;        // true/false, or null when the browser does not say
+let lastTracking = "lost";
+let pendingReanchor = false;
+let reanchorRequestedAt = 0;
+let lastAimHintAt = 0;
+const REANCHOR_TIMEOUT_MS = 4000;
+const _modelMatrix = new THREE.Matrix4();
+const _hitMatrix = new THREE.Matrix4();
+const _planeHitPos = new THREE.Vector3();
+const _previewHitPos = new THREE.Vector3();
+const _viewerPos = new THREE.Vector3();
+
+// Camera travel since placement. Telemetry only now: the real 3-DoF guard is
+// TrackingMonitor (emulatedPosition + the rotation-without-translation check).
 const camStats = { origin: null, travelM: 0, maxM: 0 };
 
-// Anchor smoothing. ARCore's anchor pose twitches frame to frame when
-// tracking quality dips (fast motion, low texture), and following it raw
-// makes the model visibly shiver and snap.
-//
-// SMOOTH_TAU is a time constant, not a per-frame blend factor: the alpha is
-// recomputed from the real frame delta each tick, so the damping feels the
-// same at 30fps and 90fps and does not turn to mush if frames are dropped -
-// which is exactly when the shivering is worst.
-//
-// SNAP_M exists because smoothing a LARGE correction is wrong. A big jump
-// means the runtime re-localised and genuinely changed its mind about where
-// the room is; easing into that reads as the model sliding across the table
-// under its own power. Past this distance we take the correction instantly
-// and let it look like what it is.
 // When the runtime returns no hit at all, the reticle is placed by geometry
 // instead of by tracking: the camera's forward ray is intersected with a
-// horizontal plane a little below the camera. It is a guess, shown in amber
-// rather than green so it is never mistaken for a real surface reading - but
-// it means you can always place something, on any surface, immediately.
-const FALLBACK_DROP_M = 0.5;    // assumed height of the surface below the camera
+// horizontal plane below the camera. It is a pointer only, shown in amber,
+// and can never be placed on (see tryPlace).
+const FALLBACK_DROP_M = 1.4;    // assumed height of the surface below the camera
 const FALLBACK_MIN_M = 0.25;    // clamp the guess to a sane arm's-length range
 const FALLBACK_MAX_M = 2.5;
 const FALLBACK_DEFAULT_M = 0.7; // used when the camera is not pointing downward
 const RETICLE_TRACKED = 0x39f0c0;
 const RETICLE_ESTIMATED = 0xffb020;
 
-const SMOOTH_TAU = 0.12;   // seconds to close ~63% of the gap
-const SNAP_M = 0.25;       // corrections beyond this are applied instantly
+// y of the real floor in the current reference space, or null when unknown.
+let floorY = null;
+// Height of the most recent plane hit; kept fresh after placement so "Drop
+// onto the floor" has a real surface to snap to.
+let lastTrackedHitY = null;
+// Deliberate vertical offset from the anchored base ("Drop onto the floor").
+// Re-applied every frame by applyPlacementPose(), on top of the anchor pose.
+let groundOffsetY = 0;
+
 let pendingPlace = false;     // a tap happened; place on the next live frame
 let surfaceExtentAtReticle = null;
 let lastSurfaceProbeAt = 0;
@@ -946,12 +1340,42 @@ function initThree() {
     50
   );
 
-  renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-  renderer.setPixelRatio(window.devicePixelRatio);
+  // Perf, all three for the same reason - a phone GPU running an AR session
+  // is already rendering the camera passthrough, and this page is a few
+  // hundred flat-shaded boxes that gain nothing from extra samples or pixels:
+  //  - antialias off: MSAA on a mobile tiler costs bandwidth on every frame.
+  //  - pixel ratio capped at 2: a 3x-DPR phone otherwise shades 2.25x the
+  //    fragments of a 2x one for a difference nobody can see at arm's length.
+  //  - high-performance: ask for the discrete/large GPU where there is a
+  //    choice, instead of the browser's power-saving default.
+  renderer = new THREE.WebGLRenderer({
+    antialias: false,
+    alpha: true,
+    powerPreference: "high-performance",
+  });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
   renderer.setSize(window.innerWidth, window.innerHeight);
   renderer.setClearColor(0x000000, 0); // transparent, so AR camera passthrough shows through
   renderer.xr.enabled = true;
+  // setPixelRatio does not apply inside an XR session - the session's own
+  // framebuffer decides the resolution there, and on a phone its default is
+  // the full native panel per eye. 0.8 renders 36% fewer fragments; the
+  // result is upscaled by the compositor and, over a camera passthrough,
+  // reads the same. This is the single biggest lever on in-session frame rate.
+  renderer.xr.setFramebufferScaleFactor(0.8);
   sceneContainer.appendChild(renderer.domElement);
+
+  // Lambert walls need light or they render black. A hemisphere light alone
+  // would shade every vertical face identically (it varies with the Y
+  // component of the normal, and every wall face is vertical), so the
+  // directional light is what actually separates two walls meeting at a
+  // corner. Both are scene-fixed rather than camera-fixed, so the shading
+  // stays put as you walk around - shading that follows the camera destroys
+  // the illusion that the model is a real object in the room.
+  scene.add(new THREE.HemisphereLight(0xffffff, 0x707070, 2.0));
+  const sun = new THREE.DirectionalLight(0xffffff, 1.1);
+  sun.position.set(1.0, 2.0, 0.6);
+  scene.add(sun);
 
   reticle = new THREE.Mesh(
     new THREE.RingGeometry(0.08, 0.1, 32).rotateX(-Math.PI / 2),
@@ -982,7 +1406,9 @@ async function checkXrSupport() {
   }
 
   if (!navigator.xr) {
-    placeHint.textContent = "WebXR is not available in this browser.";
+    placeHint.textContent = insecure
+      ? "AR needs a secure (https) address. See the note above."
+      : "AR is not available in this browser. Use Chrome on an Android phone.";
     xrStatus = "unsupported";
     if (!insecure) {
       appendError(
@@ -995,7 +1421,7 @@ async function checkXrSupport() {
   try {
     const supported = await navigator.xr.isSessionSupported("immersive-ar");
     if (!supported) {
-      placeHint.textContent = "This device/browser does not support immersive-ar.";
+      placeHint.textContent = "This phone does not support AR in the browser.";
       xrStatus = "unsupported";
       appendError(
         "navigator.xr.isSessionSupported('immersive-ar') returned false. " +
@@ -1011,48 +1437,35 @@ async function checkXrSupport() {
   }
 
   startBtn.disabled = false;
-  placeHint.textContent = "Tap Start AR, then point at the floor.";
+  placeHint.textContent = "Ready. Tap Start AR.";
 }
 
 startBtn.addEventListener("click", onStartAr);
 resetBtn.addEventListener("click", () => resetPlacementState());
 placeBtn.addEventListener("click", () => tryPlace());
+floorBtn.addEventListener("click", () => dropToFloor());
+reanchorBtn.addEventListener("click", () => requestReanchor());
 
 async function onStartAr() {
   if (!navigator.xr) return;
   startBtn.disabled = true;
   try {
-    const session = await navigator.xr.requestSession("immersive-ar", {
-      requiredFeatures: ["hit-test"],
-      // plane-detection is what makes "fit to the surface I tap" work: it
-      // gives us each detected plane's polygon, hence its real extent. It is
-      // OPTIONAL - where the browser lacks it, surfaceExtentAt() returns null
-      // and the slider value is used unchanged.
-      // local-floor is NOT guaranteed for immersive-ar - the spec only
-      // promises "viewer" and "local" - so it has to be asked for, and may
-      // still be refused. See the reference-space handling below.
-      // "anchors" is what keeps a placed model glued to a real-world spot.
-      // Without it the model sits at a fixed coordinate in the session's
-      // reference space, and ARCore's ongoing re-localisation makes that
-      // coordinate drift relative to the room - the model appears to follow
-      // the camera slightly.
-      optionalFeatures: ["dom-overlay", "plane-detection", "local-floor", "anchors"],
-      domOverlay: { root: overlayRoot },
-    });
+    // sessionInit() (ar_core.js): hit-test required; anchors, local-floor,
+    // plane-detection and dom-overlay optional. "anchors" is what keeps the
+    // model glued to the room - without it we fall back to a fixed matrix.
+    const session = await navigator.xr.requestSession("immersive-ar", sessionInit(overlayRoot));
 
     xrSession = session;
     session.addEventListener("end", onSessionEnd);
 
-    // three.js defaults renderer.xr's reference space to "local-floor". On a
-    // device that did not grant it, setSession() then throws "this device
-    // does not support the requested reference space type" and AR never
-    // starts. Ask the session what it actually granted, and fall back to
-    // "local", which every immersive-ar session has.
-    //
-    // Losing local-floor costs us nothing here: it would put the origin at
-    // floor level, but the model is anchored to a hit-test result, which
-    // already carries its own real-world height.
+    // Reference space. local and local-floor are both stationary spaces:
+    // neither one drifts by itself, and neither one is what makes content
+    // world-locked - the anchor is. local-floor only buys a known floor
+    // height. three.js defaults to local-floor and throws on devices that do
+    // not grant it, so ask what was granted and fall back to local.
+    // ("unbounded" is not offered by Chrome's ARCore backend.)
     const granted = session.enabledFeatures || [];
+    anchorsGranted = session.enabledFeatures ? granted.includes("anchors") : null;
     const spaceType = granted.includes("local-floor") ? "local-floor" : "local";
     renderer.xr.setReferenceSpaceType(spaceType);
 
@@ -1068,31 +1481,23 @@ async function onStartAr() {
         throw e;
       }
     }
+    floorY = renderer.xr.getReferenceSpaceType?.() === "local-floor"
+      || spaceType === "local-floor" ? 0 : null;
     console.info("[ar] reference space:", renderer.xr.getReferenceSpace() ? spaceType : "none",
-                 "| granted features:", granted);
+                 "| floor y:", floorY, "| anchors:", anchorsGranted, "| granted features:", granted);
 
-    startBtn.style.display = "none";
-    resetBtn.style.display = "inline-block";
-    placeBtn.style.display = "inline-block";
-    tapInfo.style.display = "block";
+    tracking.reset();
+    gate.resetSession();
+    setStage("aiming");
     xrStatus = "active";
     sendState();
-    placeHint.textContent = "Point at a detected floor, then tap to place the floorplan.";
+    placeHint.textContent = gateHint();
 
-    const viewerSpace = await session.requestReferenceSpace("viewer");
-    // entityTypes defaults to ["plane"], which means the reticle only appears
-    // once ARCore has promoted a surface to a full plane - that needs visual
-    // texture, so tiles work and a plain table often never does. Adding
-    // "point" lets the ray land on raw feature points long before a plane
-    // exists. Not every runtime accepts the option, hence the fallback.
-    try {
-      hitTestSource = await session.requestHitTestSource({
-        space: viewerSpace,
-        entityTypes: ["plane", "point"],
-      });
-    } catch (e) {
-      hitTestSource = await session.requestHitTestSource({ space: viewerSpace });
-    }
+    // Plane-only source for placement (anchorable), plane+point source for
+    // the reticle preview. See requestHitTestSources() in ar_core.js.
+    const sources = await requestHitTestSources(session);
+    hitTestSource = sources.placement;
+    previewHitTestSource = sources.preview;
 
     session.addEventListener("select", onSelect);
 
@@ -1108,16 +1513,21 @@ function onSessionEnd() {
     hitTestSource.cancel();
     hitTestSource = null;
   }
+  if (previewHitTestSource) {
+    previewHitTestSource.cancel();
+    previewHitTestSource = null;
+  }
   xrSession = null;
   renderer.setAnimationLoop(null);
   xrStatus = "idle";
+  // Both are expressed in the ended session's reference space, so they mean
+  // nothing in the next one.
+  floorY = null;
+  lastTrackedHitY = null;
   resetPlacementState();
-  startBtn.style.display = "inline-block";
+  setStage("ready");
   startBtn.disabled = false;
-  resetBtn.style.display = "none";
-  placeBtn.style.display = "none";
-  tapInfo.style.display = "none";
-  placeHint.textContent = "AR session ended. Tap Start AR to begin again.";
+  placeHint.textContent = "AR stopped. Tap Start AR to begin again.";
 }
 
 let selectCount = 0;
@@ -1126,11 +1536,12 @@ function tapDebug(note) {
   const surf = surfaceExtentAtReticle
     ? `${(surfaceExtentAtReticle * 100).toFixed(0)}cm`
     : "none";
-  const anch = placementAnchor
-    ? `yes upd=${anchorStats.updates} lost=${anchorStats.untracked} ` +
-      `drift=${(anchorStats.driftM * 100).toFixed(1)}cm ` +
-      `jit=${(anchorStats.jitterM * 1000).toFixed(1)}mm snap=${anchorStats.snaps}`
-    : "no";
+  const st = placement.stats;
+  const anch = placement.mode === "anchor"
+    ? `yes upd=${st.updates} lost=${st.untracked} ` +
+      `drift=${(st.driftM * 100).toFixed(1)}cm yaw=${st.yawCorrDeg.toFixed(2)}deg ` +
+      `jit=${(st.jitterM * 1000).toFixed(1)}mm snap=${st.snaps} re=${st.reanchors}`
+    : placement.mode;
   const cam = camStats.origin
     ? ` | camTravel=${(camStats.travelM * 100).toFixed(0)}cm max=${(camStats.maxM * 100).toFixed(0)}cm`
     : "";
@@ -1138,24 +1549,54 @@ function tapDebug(note) {
     ? (reticleEstimated ? "estimated" : "tracked")
     : "hidden";
   tapInfo.textContent =
-    `taps: ${selectCount} | reticle: ${ret} | ` +
-    `surface: ${surf} | placed: ${placed} | anchor: ${anch}${cam}` +
+    `taps: ${selectCount} | track: ${lastTracking} | surface: ${gate.level}` +
+    `${gate.reason ? "/" + gate.reason : ""} travel=${(gate.travelM * 100).toFixed(0)}cm | ` +
+    `reticle: ${ret} | plane: ${surf} | placed: ${placed} | anchor: ${anch}${cam}` +
     `${note ? " | " + note : ""}`;
+}
+
+// Coach-line text for a tracking state that is not "ok".
+function trackingHint(state) {
+  if (state === "emulated" || state === "rotation-only") {
+    return "The phone is only tracking rotation, so the model would follow you. " +
+      "Move the phone slowly side to side and point it at a well-lit, textured area.";
+  }
+  return "Tracking lost. Point at a well-lit, textured area and move slowly.";
+}
+
+// Coach-line text for the surface gate while aiming.
+function gateHint() {
+  switch (gate.level) {
+    case "blocked":
+      return trackingHint(gate.reason);
+    case "weak":
+      if (gate.reason === "points") {
+        return "Almost. Keep sweeping slowly over the floor until the ring turns green. A rug or textured spot helps.";
+      }
+      if (gate.reason === "settling") return "Hold on that spot for a moment…";
+      return "Take a step or sweep the phone side to side first, so it can see the room from a few angles.";
+    case "good":
+      return "Floor found. Tap Place.";
+    default:
+      return "Point at the floor and sweep slowly. Good light helps.";
+  }
 }
 
 // The XR "select" path. With dom-overlay active, a tap that lands on overlay
 // DOM is consumed by the DOM and never becomes an XR select - hence the
-// Place-here button below, which does not depend on this firing at all.
-// Project the camera's forward ray onto an assumed horizontal surface below
-// it. Purely geometric - no tracking data involved beyond the camera pose,
-// which is always available.
+// Place button, which does not depend on this firing at all.
+// estimateReticle() projects the camera's forward ray onto an assumed
+// horizontal surface below it: a pointer while nothing is tracked, never a
+// placement target.
 function estimateReticle() {
   if (!renderer.xr.isPresenting) return;
   const xrCam = renderer.xr.getCamera();
   xrCam.getWorldPosition(_estPos);
   _estDir.set(0, 0, -1).applyQuaternion(xrCam.getWorldQuaternion(_estQuat));
 
-  const planeY = _estPos.y - FALLBACK_DROP_M;
+  const planeY = lastTrackedHitY !== null ? lastTrackedHitY
+               : floorY !== null ? floorY
+               : _estPos.y - FALLBACK_DROP_M;
   let t = FALLBACK_DEFAULT_M;
   if (_estDir.y < -0.05) {
     t = (planeY - _estPos.y) / _estDir.y;   // ray-plane intersection
@@ -1164,8 +1605,6 @@ function estimateReticle() {
 
   _estPos.addScaledVector(_estDir, t);
   _estPos.y = planeY;                        // keep it flat, not on the ray
-  // Translation only: the ring geometry is already baked flat, so identity
-  // rotation lies horizontal.
   reticle.matrix.makeTranslation(_estPos.x, _estPos.y, _estPos.z);
   reticle.visible = true;
   reticleEstimated = true;
@@ -1182,22 +1621,43 @@ function onSelect() {
 // the live XRHitTestResult, and hit-test results - like XRFrame itself - are
 // only valid inside the frame callback that produced them. So the tap only
 // raises a flag; onXrFrame does the work while it still legally can.
+//
+// Only a "good" surface is accepted: a plane hit (anchorable to the plane),
+// stable for a dozen frames, after enough camera travel for ARCore's map to
+// be well-conditioned, with 6-DoF tracking. Anything less and the anchor is
+// born on a guess and drifts or jumps as the map settles.
 function tryPlace() {
   if (placed) { tapDebug("already placed"); return; }
-  if (!reticle || !reticle.visible) { tapDebug("no reticle - aim at a surface"); return; }
+  if (lastTracking !== "ok") {
+    placeHint.textContent = trackingHint(lastTracking);
+    tapDebug("tracking not ok");
+    return;
+  }
+  if (gate.level !== "good") {
+    placeHint.textContent = gateHint();
+    tapDebug("surface not ready");
+    return;
+  }
   pendingPlace = true;
   tapDebug("placing...");
 }
 
-function applyModelRotation() {
-  if (placementGroup) placementGroup.rotation.y = THREE.MathUtils.degToRad(-modelYawDeg);
+// The single writer of the placed model's transform. Every frame, and after
+// any rotation / scale / drop change:
+//   model = anchoredBase * T(0, groundOffsetY, 0) * Ry(-yaw) * S(1/denom)
+// The uniform scale stays out of planToLocal/localToPlan - see the SCALE
+// section at the top of this file.
+function applyPlacementPose() {
+  if (!placementGroup || placement.mode === "none") return;
+  composeModelMatrix(placement.base, groundOffsetY, modelYawDeg, 1 / modelDenom, _modelMatrix);
+  _modelMatrix.decompose(placementGroup.position, placementGroup.quaternion, placementGroup.scale);
+  // worldToLocal() in maybeSendPose reads matrixWorld, so refresh it now
+  // rather than streaming last frame's pose.
+  placementGroup.updateMatrixWorld(true);
 }
 
-function applyModelScale() {
-  // Uniform scale on the group only - see the SCALE section at the top of
-  // this file for why this must not leak into planToLocal/localToPlan.
-  if (placementGroup) placementGroup.scale.setScalar(1 / modelDenom);
-}
+function applyModelRotation() { applyPlacementPose(); }
+function applyModelScale() { applyPlacementPose(); }
 
 // Real-world size of the building at the current ppm, in meters.
 function realFootprintM() {
@@ -1253,33 +1713,47 @@ function denomToFitSurface() {
   return THREE.MathUtils.clamp(longest / (SURFACE_FILL * extent), DENOM_MIN, DENOM_MAX);
 }
 
+// Dropping a group from the scene does not free its GPU buffers - the ppm
+// field rebuilds the whole model on every edit, so without this each rebuild
+// leaks a full copy of the merged wall geometry into video memory.
+function disposeGroup(group) {
+  if (!group) return;
+  group.traverse((o) => {
+    if (o.isMesh && o.geometry) o.geometry.dispose();
+  });
+}
+
 // ppm changes the plan->local mapping, so the geometry has to be rebuilt;
 // modelDenom does not, so it only ever calls applyModelScale().
 function rebuildPlacedGeometry() {
   if (!placed || !placementGroup) return;
-  const pos = placementGroup.position.clone();
   scene.remove(placementGroup);
+  disposeGroup(placementGroup);
   placementGroup = buildFloorplanGroup(planData);
-  placementGroup.position.copy(pos);
-  applyModelScale();
-  applyModelRotation();
   scene.add(placementGroup);
+  applyPlacementPose();   // the anchored base is unchanged; just re-apply it
 }
 
-function placeFloorplanAtReticle() {
-  const pos = new THREE.Vector3();
-  const quat = new THREE.Quaternion();
-  const scaleV = new THREE.Vector3();
-  reticle.matrix.decompose(pos, quat, scaleV);
+// Called from onXrFrame with the LIVE plane hit the user accepted. The model
+// origin (plan footprint centre, see planToLocal) goes exactly on the hit
+// point and the anchor is created from that same hit, so the anchor sits at
+// the model's centre: the shortest possible lever arm for any rotation
+// correction, and the best fit to ARCore's "within ~8 m of the anchor" rule.
+function placeFloorplanAtReticle(hit, hitPose, frame, refSpace) {
+  _hitMatrix.fromArray(hitPose.transform.matrix);
+  const pos = new THREE.Vector3().setFromMatrixPosition(_hitMatrix);
 
-  if (placementGroup) scene.remove(placementGroup);
+  if (placementGroup) {
+    scene.remove(placementGroup);
+    disposeGroup(placementGroup);
+  }
   placementGroup = buildFloorplanGroup(planData);
 
-  // Position-only placement (see top-of-file coordinate comment): the
-  // group keeps identity rotation so its local axes equal world axes,
-  // which keeps the pose inverse below a pure translation/scale.
-  placementGroup.position.copy(pos);
-  placementGroup.quaternion.identity();
+  // Base = hit position, no rotation (the model starts axis-aligned; the
+  // user yaws it with rotation_deg). The anchor is requested here, inside
+  // the frame, and takes over from the next frame it resolves.
+  groundOffsetY = 0;
+  placement.place(hit, _hitMatrix, pos, frame, refSpace);
 
   let fittedTo = null;
   if (autoFit) {
@@ -1289,47 +1763,100 @@ function placeFloorplanAtReticle() {
       fittedTo = surfaceExtentAtReticle;
     }
   }
-  applyModelScale();
-  applyModelRotation();
-  syncScaleUi();
   scene.add(placementGroup);
+  applyPlacementPose();
+  syncScaleUi();
 
   reticle.visible = false;
   placed = true;
-  placedStatus.textContent = `Placed at 1:${Math.round(modelDenom)}` +
-    (fittedTo ? ` (fitted to a ${(fittedTo * 100).toFixed(0)} cm surface)` : "");
-  placeHint.textContent = fittedTo
-    ? "Placed on the surface. Adjust size here or from the laptop panel."
-    : "Placed. No surface size detected - set the scale here or from the laptop.";
+  trackingLost = false;
+  setStage("placed");
+  placedStatus.textContent = Math.round(modelDenom) === 1
+    ? "Life-size"
+    : `Tabletop, 1:${Math.round(modelDenom)}`;
+  if (placement.mode === "fixed" || anchorsGranted === false) {
+    placeHint.textContent =
+      "Placed, but this phone cannot anchor it. If it slides, tap Start over.";
+  } else {
+    placeHint.textContent = fittedTo
+      ? "Placed. Walk around it, or adjust below."
+      : "Placed. Adjust the size below if it looks off.";
+  }
   sendState();
+}
+
+// Move a placed model down onto the best floor height we know about, and
+// remember the correction so applyPlacementPose keeps applying it on top of
+// the anchor every frame.
+function dropToFloor() {
+  if (!placed || !placementGroup) return;
+  const targetY = lastTrackedHitY !== null ? lastTrackedHitY
+                : floorY !== null ? floorY
+                : null;
+  if (targetY === null) {
+    placeHint.textContent =
+      "No floor detected yet - point the camera at the floor for a moment, then try again.";
+    return;
+  }
+  const delta = targetY - placementGroup.position.y;
+  groundOffsetY += delta;
+  applyPlacementPose();
+  const src = lastTrackedHitY !== null ? "a detected surface" : "the session floor";
+  placeHint.textContent =
+    `Dropped ${Math.abs(delta * 100).toFixed(0)} cm ${delta < 0 ? "down" : "up"} onto ${src}.`;
+  tapDebug("dropped to floor");
+}
+
+// Re-anchor: a new anchor at the floor the user is pointing at (normally
+// near them), keeping the model exactly where it is now. Useful at life-size
+// once you have walked far from the original tap point.
+function requestReanchor() {
+  if (!placed) return;
+  if (anchorsGranted === false) {
+    placeHint.textContent = "This phone cannot anchor. Use Start over to place it again.";
+    return;
+  }
+  pendingReanchor = true;
+  reanchorRequestedAt = performance.now();
+  placeHint.textContent = "Point at the floor near you…";
 }
 
 function resetPlacementState() {
   placed = false;
   pendingPlace = false;
-  placementAnchor = null;
-  anchorStats.updates = 0;
-  anchorStats.untracked = 0;
-  anchorStats.driftM = 0;
-  anchorStats.jitterM = 0;
-  anchorStats.snaps = 0;
-  anchorStats.origin = null;
-  lastAnchorFrameAt = 0;
+  pendingReanchor = false;
+  placement.reset();
+  gate.reset();
   camStats.origin = null;
   camStats.travelM = 0;
   camStats.maxM = 0;
+  groundOffsetY = 0;
+  trackingLost = false;
+  if (floorBtn) floorBtn.disabled = true;
   if (placementGroup) {
     scene.remove(placementGroup);
+    disposeGroup(placementGroup);
     placementGroup = null;
   }
   if (reticle) reticle.visible = false;
   placedStatus.textContent = "Not placed";
   sendState();
   if (xrSession) {
-    placeHint.textContent = "Point at a detected floor, then tap to place the floorplan.";
+    setStage("aiming");
+    placeHint.textContent = gateHint();
   }
 }
 
+// Frame loop. Order matters:
+//   1. tracking state (everything else depends on it)
+//   2. hit tests (plane-only = anchorable, plane+point = preview)
+//   3. not placed: surface gate, reticle, deferred placement
+//      placed:     re-read the anchor, apply the model pose, re-anchor
+//   4. hide while tracking is not 6-DoF
+//   5. stream pose (group matrixWorld already current from step 3)
+//   6. telemetry, render
+// three.js has already written this frame's viewer pose into the XR camera
+// before calling us, so the camera and the anchor are read from one frame.
 function onXrFrame(timestamp, frame) {
   if (!frame) {
     renderer.render(scene, camera);
@@ -1338,131 +1865,127 @@ function onXrFrame(timestamp, frame) {
 
   const refSpace = renderer.xr.getReferenceSpace();
 
-  if (hitTestSource && !placed) {
+  // 1. Tracking.
+  const viewerPose = frame.getViewerPose(refSpace);
+  const trackState = tracking.update(viewerPose, timestamp);
+  lastTracking = trackState;
+  if (viewerPose) {
+    const p = viewerPose.transform.position;
+    _viewerPos.set(p.x, p.y, p.z);
+  }
+
+  // 2. Hit tests. Results (like the frame) are only valid inside this call.
+  let planeHit = null;
+  let planePose = null;
+  if (hitTestSource) {
     const results = frame.getHitTestResults(hitTestSource);
     if (results.length > 0) {
-      const hit = results[0];
-      const pose = hit.getPose(refSpace);
+      planePose = results[0].getPose(refSpace);
+      if (planePose) planeHit = results[0];
+    }
+  }
+  let previewPose = null;
+  if (previewHitTestSource) {
+    const results = frame.getHitTestResults(previewHitTestSource);
+    if (results.length > 0) previewPose = results[0].getPose(refSpace);
+  }
+  if (planePose) {
+    lastTrackedHitY = planePose.transform.position.y;
+    if (placed) floorBtn.disabled = false;
+  }
+
+  // Camera travel accumulates for the whole session, placed or not.
+  gate.update({
+    trackingState: trackState,
+    planeHitPos: planePose ? _planeHitPos.copy(planePose.transform.position) : null,
+    previewHitPos: previewPose ? _previewHitPos.copy(previewPose.transform.position) : null,
+    camPos: viewerPose ? _viewerPos : null,
+  });
+
+  // 3a. Aiming.
+  if (!placed) {
+    const shownPose = trackState === "ok" ? (planePose || previewPose) : null;
+    if (shownPose) {
       reticle.visible = true;
-      reticle.matrix.fromArray(pose.transform.matrix);
-      if (reticleEstimated) {
-        reticleEstimated = false;
-        reticle.material.color.setHex(RETICLE_TRACKED);
-      }
+      reticle.matrix.fromArray(shownPose.transform.matrix);
+      const good = gate.level === "good";
+      reticleEstimated = !good;
+      reticle.material.color.setHex(good ? RETICLE_TRACKED : RETICLE_ESTIMATED);
+    } else {
+      estimateReticle();
+    }
 
-      // Measure the surface under the reticle HERE, where `frame` is still
-      // valid, and keep only the resulting number for the tap handler.
-      if (timestamp - lastSurfaceProbeAt > SURFACE_PROBE_MS) {
-        lastSurfaceProbeAt = timestamp;
-        _reticlePos.setFromMatrixPosition(reticle.matrix);
-        try {
-          surfaceExtentAtReticle = surfaceExtentAt(_reticlePos, frame, refSpace);
-        } catch (err) {
-          surfaceExtentAtReticle = null;   // plane-detection not granted
-        }
+    if (planePose && timestamp - lastSurfaceProbeAt > SURFACE_PROBE_MS) {
+      lastSurfaceProbeAt = timestamp;
+      _reticlePos.setFromMatrixPosition(_hitMatrix.fromArray(planePose.transform.matrix));
+      try {
+        surfaceExtentAtReticle = surfaceExtentAt(_reticlePos, frame, refSpace);
+      } catch (err) {
+        surfaceExtentAtReticle = null;   // plane-detection not granted
       }
+    } else if (!planePose) {
+      surfaceExtentAtReticle = null;
+    }
 
-      if (pendingPlace) {
-        pendingPlace = false;
+    placeBtn.disabled = gate.level !== "good";
+    if (timestamp - lastAimHintAt > 300) {
+      lastAimHintAt = timestamp;
+      placeHint.textContent = gateHint();
+    }
+
+    if (pendingPlace) {
+      pendingPlace = false;
+      if (planeHit && gate.level === "good") {
         try {
-          placeFloorplanAtReticle();
+          placeFloorplanAtReticle(planeHit, planePose, frame, refSpace);
           tapDebug("placed ok");
         } catch (err) {
           appendError("Placement failed: " + ((err && err.stack) || err));
           tapDebug("threw: " + (err && err.message));
         }
-        // Anchor to the hit result while it is still live. Async, and the
-        // model is already visible - the anchor just takes over drift
-        // correction once it resolves.
-        if (placed && typeof hit.createAnchor === "function") {
-          hit.createAnchor().then(
-            (anchor) => { placementAnchor = anchor; },
-            () => { placementAnchor = null; }   // refused: fall back to static
-          );
-        }
-      }
-    } else {
-      // Nothing tracked here - fall back to a geometric guess so the user is
-      // never stuck waiting for ARCore to find features.
-      estimateReticle();
-      surfaceExtentAtReticle = null;
-      if (pendingPlace) {
-        pendingPlace = false;
-        try {
-          placeFloorplanAtReticle();
-          tapDebug("placed (estimated surface)");
-        } catch (err) {
-          appendError("Placement failed: " + ((err && err.stack) || err));
-        }
-        // There is no hit result to anchor to here, but a free-floating
-        // anchor can still be created from a bare pose - so an estimated
-        // placement gets the same drift correction as a tracked one.
-        if (placed && typeof frame.createAnchor === "function") {
-          try {
-            _estPos.setFromMatrixPosition(reticle.matrix);
-            frame.createAnchor(
-              new XRRigidTransform({ x: _estPos.x, y: _estPos.y, z: _estPos.z }),
-              refSpace
-            ).then(
-              (anchor) => { placementAnchor = anchor; },
-              () => { placementAnchor = null; }
-            );
-          } catch (e) {
-            placementAnchor = null;   // anchors not granted; static placement
-          }
-        }
+      } else {
+        // Accepted on a good ring, but the surface went away before this frame.
+        placeHint.textContent = gateHint();
+        tapDebug("surface lost - not placed");
       }
     }
   }
 
-  // Follow the anchor. ARCore re-localises continuously, so the anchor's pose
-  // in the reference space changes over time - re-reading it every frame is
-  // what keeps the model on the real table instead of sliding with the
-  // camera. Position only: the placement contract requires identity rotation
-  // on the group so the pose inverse stays a pure translation/scale.
-  if (placed && placementGroup && placementAnchor) {
-    const tracked = frame.trackedAnchors;
-    if (tracked && !tracked.has(placementAnchor)) {
-      anchorStats.untracked++;
-    } else {
-      const anchorPose = frame.getPose(placementAnchor.anchorSpace, refSpace);
-      if (anchorPose) {
-        const t = anchorPose.transform.position;
-        _anchorPos.set(t.x, t.y, t.z);
-
-        if (anchorStats.origin === null) {
-          // First pose: adopt it outright. Easing in from the tap position
-          // would make the model drift into place on arrival.
-          anchorStats.origin = _anchorPos.clone();
-          _prevAnchorPos.copy(_anchorPos);
-          placementGroup.position.copy(_anchorPos);
-        } else {
-          // Jitter is measured on the RAW pose, deliberately: comparing
-          // against the smoothed position would measure our own damping.
-          const step = _anchorPos.distanceTo(_prevAnchorPos);
-          anchorStats.jitterM = anchorStats.jitterM * 0.9 + step * 0.1;
-          anchorStats.driftM = _anchorPos.distanceTo(anchorStats.origin);
-          _prevAnchorPos.copy(_anchorPos);
-
-          const gap = _anchorPos.distanceTo(placementGroup.position);
-          if (gap > SNAP_M) {
-            placementGroup.position.copy(_anchorPos);
-            anchorStats.snaps++;
-          } else {
-            const dt = lastAnchorFrameAt
-              ? Math.min(0.1, (timestamp - lastAnchorFrameAt) / 1000)
-              : 0;
-            const alpha = dt > 0 ? 1 - Math.exp(-dt / SMOOTH_TAU) : 1;
-            placementGroup.position.lerp(_anchorPos, alpha);
-          }
-        }
-        lastAnchorFrameAt = timestamp;
-        anchorStats.updates++;
-      }
-    }
-  }
-
+  // 3b. Placed: re-read the anchor and write the model pose, every frame.
   if (placed && placementGroup) {
+    placement.update(frame, refSpace);
+    applyPlacementPose();
+
+    if (pendingReanchor) {
+      if (planeHit && trackState === "ok") {
+        pendingReanchor = false;
+        _hitMatrix.fromArray(planePose.transform.matrix);
+        placement.reanchor(planeHit, _hitMatrix, frame, refSpace);
+        placeHint.textContent = "Re-anchored to the floor near you.";
+        tapDebug("re-anchor requested");
+      } else if (timestamp - reanchorRequestedAt > REANCHOR_TIMEOUT_MS) {
+        pendingReanchor = false;
+        placeHint.textContent = "No floor found to re-anchor to. Point at the floor near you and try again.";
+      }
+    }
+  }
+
+  // 4. Not 6-DoF (no pose, emulatedPosition, or rotation without
+  // translation): world-locked content would appear to follow the camera.
+  // Hide the model and pause pose streaming until real tracking returns;
+  // the anchor puts it back where it belongs.
+  const posLost = trackState !== "ok";
+  if (placed && placementGroup && posLost !== trackingLost) {
+    trackingLost = posLost;
+    placementGroup.visible = !posLost;
+    placeHint.textContent = posLost
+      ? trackingHint(trackState)
+      : "Tracking back. Walk around it, or adjust below.";
+    tapDebug(posLost ? "tracking lost" : "tracking back");
+  }
+
+  // 5. Pose stream.
+  if (placed && placementGroup && !trackingLost) {
     maybeSendPose(timestamp);
 
     const xrCam = renderer.xr.getCamera();
@@ -1475,26 +1998,73 @@ function onXrFrame(timestamp, frame) {
     }
   }
 
+  // 6. Telemetry + render.
   if (timestamp - lastTapDebugAt > 500) {
     lastTapDebugAt = timestamp;
     tapDebug();
+    sendDiag(frame, refSpace, viewerPose);
   }
 
   renderer.render(scene, camera);
 }
 
 let reticleEstimated = false;
+let trackingLost = false;
 const _reticlePos = new THREE.Vector3();
 const _estPos = new THREE.Vector3();
 const _estDir = new THREE.Vector3();
 const _estQuat = new THREE.Quaternion();
-const _anchorPos = new THREE.Vector3();
-const _prevAnchorPos = new THREE.Vector3();
 const _camTrack = new THREE.Vector3();
 const _camPos = new THREE.Vector3();
 const _camQuat = new THREE.Quaternion();
 const _forward = new THREE.Vector3();
 const _groupQuatInv = new THREE.Quaternion();
+
+// Tracking telemetry for remote debugging. Carries a "type", so viewers
+// ignore it per PROTOCOL.md; a laptop-side listener can log it while
+// someone walks with the phone.
+const AR_BUILD = "2026-11-20-anchor-yaw";
+function sendDiag(frame, refSpace, viewerPose) {
+  if (!socket || socket.readyState !== WebSocket.OPEN) return;
+  const r3 = (v) => v ? [+v.x.toFixed(3), +v.y.toFixed(3), +v.z.toFixed(3)] : null;
+  const anchor = placement.anchor;
+  let anchorPos = null;
+  let anchorTracked = null;
+  if (anchor) {
+    const tracked = frame.trackedAnchors;
+    anchorTracked = tracked ? tracked.has(anchor) : null;
+    try {
+      const p = frame.getPose(anchor.anchorSpace, refSpace);
+      if (p) anchorPos = r3(p.transform.position);
+    } catch (e) { /* anchor deleted */ }
+  }
+  const st = placement.stats;
+  socket.send(JSON.stringify({
+    type: "diag",
+    build: AR_BUILD,
+    text: tapInfo.textContent,
+    refSpace: renderer.xr.getReferenceSpaceType?.() ?? null,
+    granted: xrSession && xrSession.enabledFeatures ? [...xrSession.enabledFeatures] : null,
+    emulated: viewerPose ? viewerPose.emulatedPosition : null,
+    tracking: lastTracking,
+    surface: gate.level,
+    surfaceReason: gate.reason,
+    sessionTravelM: +gate.travelM.toFixed(2),
+    cam: viewerPose ? r3(viewerPose.transform.position) : null,
+    group: placementGroup ? r3(placementGroup.position) : null,
+    groupVisible: placementGroup ? placementGroup.visible : null,
+    placed,
+    placementMode: placement.mode,
+    hasAnchor: !!anchor,
+    anchorTracked,
+    anchor: anchorPos,
+    anchorDriftM: +st.driftM.toFixed(3),
+    anchorYawCorrDeg: +st.yawCorrDeg.toFixed(2),
+    anchorJitterMm: +(st.jitterM * 1000).toFixed(1),
+    reanchors: st.reanchors,
+    denom: modelDenom,
+  }));
+}
 
 function maybeSendPose(timestamp) {
   if (timestamp - lastSendAt < SEND_INTERVAL_MS) return;
@@ -1535,6 +2105,12 @@ function syncScaleUi() {
   if (document.activeElement !== yawSlider) yawSlider.value = String(Math.round(modelYawDeg));
   yawOut.textContent = String(Math.round(modelYawDeg));
   autoFitChk.checked = autoFit;
+  const life = denom === 1;
+  tabletopBtn.classList.toggle("active", !life);
+  walkthroughBtn.classList.toggle("active", life);
+  if (placed) {
+    placedStatus.textContent = life ? "Life-size" : `Tabletop, 1:${denom}`;
+  }
 
   const { w, d } = realFootprintM();
   const longest = Math.max(w, d);
@@ -1554,7 +2130,7 @@ function syncScaleUi() {
 // works while the UI is hidden.
 uiToggle.addEventListener("click", () => {
   const hidden = overlayRoot.classList.toggle("ui-hidden");
-  uiToggle.textContent = hidden ? "Show UI" : "Hide UI";
+  uiToggle.textContent = hidden ? "Show" : "Hide";
   uiToggle.setAttribute("aria-pressed", String(hidden));
 });
 
@@ -1588,9 +2164,52 @@ realSizeInput.addEventListener("change", () => {
   sendState();
 });
 
+// One button for the walkthrough case, because getting it wrong is three
+// separate mistakes and each one silently ruins a take: fit-to-surface left on
+// re-fits the model to whatever you tapped (a 1 m table -> roughly 1:8), the
+// scale slider defaults to 1:50, and translucent walls read as haze on camera.
+walkthroughBtn.addEventListener("click", () => {
+  autoFit = false;
+  autoFitChk.checked = false;
+  modelDenom = 1;
+  wallOpacity = 1;
+  if (wallMaterial) applyWallOpacity(wallMaterial, wallOpacity);
+  applyModelScale();
+  syncScaleUi();
+  sendState();
+});
+
 autoFitChk.addEventListener("change", () => {
   autoFit = autoFitChk.checked;
   sendState();
+});
+
+// The other half of the Tabletop / Life-size pair. Fit-to-surface back on,
+// and if a surface size is known re-fit to it now; otherwise 1:50, which is
+// desk-sized for every bundled plan.
+tabletopBtn.addEventListener("click", () => {
+  autoFit = true;
+  autoFitChk.checked = true;
+  const fitted = placed ? denomToFitSurface() : null;
+  modelDenom = fitted !== null ? fitted : 50;
+  applyModelScale();
+  syncScaleUi();
+  sendState();
+});
+
+function nudgeYaw(deltaDeg) {
+  modelYawDeg = ((modelYawDeg + deltaDeg) % 360 + 360) % 360;
+  applyModelRotation();
+  syncScaleUi();
+  sendState();
+}
+rotL.addEventListener("click", () => nudgeYaw(-15));
+rotR.addEventListener("click", () => nudgeYaw(15));
+
+sheetToggle.addEventListener("click", () => {
+  const collapsed = scalePanel.classList.toggle("collapsed");
+  sheetToggle.innerHTML = collapsed ? "&#8963;" : "&#8964;";
+  sheetToggle.setAttribute("aria-label", collapsed ? "Expand" : "Collapse");
 });
 
 // ---------------------------------------------------------------------
@@ -1615,7 +2234,6 @@ async function boot() {
     return;
   }
 
-  scalePanel.style.display = "block";
   syncScaleUi();
 
   await checkXrSupport();

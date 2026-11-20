@@ -1,0 +1,175 @@
+/* Mobile first: content, then a fixed bottom tab bar. From 900px: left rail. */
+.shell {
+  min-height: 100dvh;
+}
+
+.skip {
+  position: absolute;
+  left: var(--space-2);
+  top: -100px;
+  z-index: 100;
+  padding: var(--space-2) var(--space-3);
+  background: var(--ink);
+  color: var(--paper);
+}
+.skip:focus {
+  top: var(--space-2);
+}
+
+.main {
+  padding-bottom: calc(var(--tabbar-h) + var(--safe-b));
+  min-width: 0;
+  position: relative;
+}
+
+.phoneStatus {
+  padding: var(--space-2) var(--space-4);
+  border-bottom: 1px solid var(--rule);
+  background: var(--warn-wash);
+}
+.phoneStatus:empty {
+  display: none;
+}
+
+.nav {
+  position: fixed;
+  z-index: 20;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: calc(var(--tabbar-h) + var(--safe-b));
+  padding-bottom: var(--safe-b);
+  background: var(--paper);
+  border-top: var(--stroke) solid var(--ink);
+}
+.brand,
+.status {
+  display: none;
+}
+.nav ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+}
+.nav a {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  font-size: 11px;
+  font-weight: 600;
+  text-decoration: none;
+  color: var(--graphite);
+  text-align: center;
+  line-height: 1.1;
+}
+.nav a.active {
+  color: var(--ink);
+}
+.nav a.active svg {
+  stroke-width: 2.25;
+}
+
+.routeProgress {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: linear-gradient(90deg, var(--ink) 30%, transparent 30%);
+  background-size: 200% 100%;
+  animation: slide 1s linear infinite;
+}
+@keyframes slide {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: -100% 0;
+  }
+}
+
+.demo {
+  font-size: var(--step--1);
+  font-weight: 600;
+  padding: 2px var(--space-2);
+  border: 1px solid var(--warn);
+  color: var(--warn);
+  border-radius: var(--radius-s);
+}
+
+@media (min-width: 900px) {
+  .shell {
+    display: grid;
+    grid-template-columns: var(--rail-w) 1fr;
+  }
+  .main {
+    padding-bottom: 0;
+  }
+  .nav {
+    position: sticky;
+    top: 0;
+    height: 100dvh;
+    border-top: 0;
+    border-right: var(--stroke) solid var(--ink);
+    display: flex;
+    flex-direction: column;
+    padding: var(--space-5) var(--space-3);
+    gap: var(--space-5);
+  }
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: 0 var(--space-3);
+    font-weight: 800;
+    font-stretch: 125%;
+    font-size: var(--step-1);
+    letter-spacing: -0.02em;
+  }
+  .mark {
+    width: 18px;
+    height: 18px;
+    border: 3px solid var(--ink);
+    border-right-width: 8px;
+    flex: none;
+  }
+  .nav ul {
+    height: auto;
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 2px;
+  }
+  .nav a {
+    flex-direction: row;
+    justify-content: flex-start;
+    gap: var(--space-3);
+    min-height: var(--touch);
+    padding: 0 var(--space-3);
+    font-size: var(--step-0);
+    border-radius: var(--radius-s);
+  }
+  .nav a:hover {
+    background: var(--wash);
+    color: var(--ink);
+  }
+  .nav a.active {
+    background: var(--ink);
+    color: var(--paper);
+  }
+  .phoneStatus {
+    display: none;
+  }
+  .status {
+    margin-top: auto;
+    display: grid;
+    gap: var(--space-2);
+    justify-items: start;
+    padding: 0 var(--space-3);
+  }
+}

@@ -60,9 +60,9 @@ import websockets
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 # Must match what the pages load, or the fake walk happens on a different
 # plan's extents than the map is drawing. Both pages default to
-# plans/bungalow.json and accept ?plan=<name>; --plan mirrors that here.
+# plans/newri-reference.json and accept ?plan=<name>; --plan mirrors that here.
 PLANS_DIR = os.path.join(SCRIPT_DIR, "plans")
-DEFAULT_PLAN = "bungalow"
+DEFAULT_PLAN = "newri-reference"
 
 
 def plan_path(name):

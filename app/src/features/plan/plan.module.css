@@ -1,0 +1,76 @@
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.layout {
+  display: grid;
+  gap: var(--space-5);
+  align-items: start;
+}
+@media (min-width: 1000px) {
+  .layout {
+    grid-template-columns: minmax(0, 1fr) 340px;
+  }
+}
+
+.overlayFigure {
+  margin: 0;
+  display: grid;
+  gap: var(--space-2);
+  min-width: 0;
+}
+.overlayTools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 var(--space-4);
+}
+.overlayStage {
+  border: var(--stroke) solid var(--ink);
+  border-radius: var(--radius-s);
+  /* drafting grid; the source image covers it when shown */
+  background-color: #fff;
+  background-image:
+    linear-gradient(#efefef 1px, transparent 1px),
+    linear-gradient(90deg, #efefef 1px, transparent 1px);
+  background-size: 20px 20px;
+  overflow: hidden;
+}
+.overlaySvg {
+  width: 100%;
+  height: auto;
+  max-height: 72vh;
+}
+
+/* Overlay always sits on a white sheet or a photo, so it uses fixed ink colours
+   with a white halo that keeps walls readable over any image. */
+.wall {
+  stroke: #000;
+  stroke-linecap: square;
+}
+.wallFill {
+  stroke: #8a8a8a; /* grey, not dashed: gap fills are often shorter than a dash */
+}
+.wallSelected {
+  stroke: #13804b;
+}
+.wallHit {
+  stroke: transparent;
+  cursor: pointer;
+  pointer-events: stroke;
+}
+.wallHit:hover {
+  stroke: rgb(19 128 75 / 0.25);
+}
+.roomLabel {
+  fill: #000;
+  font-weight: 700;
+  text-anchor: middle;
+  dominant-baseline: middle;
+  paint-order: stroke;
+  stroke: #fff;
+  stroke-width: 0.25em;
+  stroke-linejoin: round;
+  pointer-events: none;
+}

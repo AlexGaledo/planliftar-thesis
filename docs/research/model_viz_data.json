@@ -1,0 +1,276 @@
+{
+  "meta": {
+    "title": "PlanLiftAR model and pipeline visualization data",
+    "companion_doc": "docs/research/MODEL_EXPLAINED.md",
+    "generated": "2026-11-20",
+    "branch": "planliftar-mvp-pwa",
+    "note": "Every number in charts[] is copied from a repo output file named in that chart's 'source', except where 'source' says it was computed by running repo code (no code was changed). Kaggle runs v3-v8 use CubiCasa5k sample 6044 (high_quality_architectural); v9 and local/ use sample 10052 (colorful). The two samples are not directly comparable."
+  },
+  "pipeline": {
+    "nodes": [
+      {"id": "input", "label": "Floorplan image", "group": "input", "desc": "PNG/JPG of a 2D plan, any resolution. Sample: CubiCasa5k colorful/10052/F1_original.png (geometry-v2 cell 4)."},
+      {"id": "preprocess", "label": "Preprocess + auto-crop", "group": "preprocess", "desc": "Resize to 512x512, ImageNet mean/std normalization. Pass 1 on whole sheet; if prob>0.3 bbox +8% margin covers <50% of sheet, re-infer on the crop (geometry-v2 cell 4)."},
+      {"id": "mitunet", "label": "MitUNet wall segmentation", "group": "neural", "desc": "MiT-b4 Mix-Transformer encoder + U-Net decoder with scSE attention, 1 output class (wall). Weights: MitUNet_cubicasa-5k_a62_mit_b4_tversky_7666_30E.pth, 257.4 MB (geometry-v2 cells 2-3)."},
+      {"id": "cubicasa", "label": "CubiCasa multi-task net", "group": "neural", "desc": "hg_furukawa_original hourglass network, 44 output channels = 21 junction heatmaps + 12 room classes + 11 icon classes. Gives second-opinion rooms, walls, doors and windows (planliftar_cubicasa cells 0-6)."},
+      {"id": "probmap", "label": "Wall probability map", "group": "data", "desc": "Sigmoid output resized back to original size with bilinear interpolation, kept as float [0,1] and cached as wall_prob_crop.npy (geometry-v2 cell 4)."},
+      {"id": "hysteresis", "label": "Hysteresis healing", "group": "vectorize", "desc": "Strong wall >=0.50, weak wall >=0.25 kept only if connected to strong. Heals confidence dips (geometry-v2 cell 5)."},
+      {"id": "thickness", "label": "Wall thickness + micro-gap seal", "group": "vectorize", "desc": "t_med = 2 x median distance-transform value on the skeleton. Morphological CLOSE with a (1.5 x t_med) square kernel seals hairline breaks while leaving door-size gaps alone (geometry-v2 cell 6)."},
+      {"id": "sealhints", "label": "Virtual door/window seals", "group": "vectorize", "desc": "Labeling copy only: mask OR rasterized CubiCasa walls, plus bars 1.6 x opening width across each CubiCasa door/window. Never exported (geometry-v2 cell 7)."},
+      {"id": "rooms", "label": "Rooms-first region extraction", "group": "vectorize", "desc": "4-connected components of the non-wall space. Border-touching = exterior; others >= MIN_ROOM_AREA are rooms. Contours simplified with approxPolyDP(eps = 1% perimeter). Closed by construction (geometry-v2 cell 8)."},
+      {"id": "walls", "label": "Nearest-label wall derivation", "group": "vectorize", "desc": "Every wall pixel assigned to nearest room label via Euclidean distance transform; borders between two labels become wall runs with thickness read from the distance transform (geometry-v2 cell 8; local post-process consensus_lab.py:933)."},
+      {"id": "consensus", "label": "Consensus check vs CubiCasa", "group": "check", "desc": "IoU matrix MitUNet rooms x CubiCasa rooms, Hungarian 1:1 match at IoU>=0.5 (legacy) or area-weighted graded score (local). Advisory: agreement is evidence, not a verdict (geometry-v2 cells 9-10; consensus_lab.py:368, :1143)."},
+      {"id": "watershed", "label": "Watershed virtual split", "group": "check", "desc": "Only for scoring merged regions: seeds at CubiCasa room centroids, watershed on -distance transform. Never adds exported walls (geometry-v2 cell 11)."},
+      {"id": "invariants", "label": "Invariants", "group": "check", "desc": "All polygons closed, every room >= MIN_ROOM_AREA, 1-40 rooms, at least one room; loose wall endpoints = warning only (geometry-v2 cell 10)."},
+      {"id": "barrier", "label": "Acceptance barrier", "group": "check", "desc": "Single exit. Rejected plans write no geometry, only acceptance_report.json with machine-readable reject_reasons (geometry-v2 cell 12)."},
+      {"id": "export", "label": "JSON export (doors carved)", "group": "output", "desc": "schema 2.0: walls (px), rooms (polygons), fixtures, scale {units: relative_px, user_scale_required: true}. Door spans cut out of wall runs (geometry-v2 cell 13)."},
+      {"id": "gapclose", "label": "Gap closure (plan_ops)", "group": "output", "desc": "Normalize schema, weld dangling endpoints within 3 x t_med; longer spans only if a window lies on the line; never across a door (deliverables/plan_ops.py:144; JS port livemap/plan_ops.js:171)."},
+      {"id": "glb", "label": "3D extrusion (GLB)", "group": "output", "desc": "One box per wall (length x thickness x 2.5 m height) + 0.02 m floor slab, recentered on footprint, plan (x,y) -> world (x,-y) (deliverables/glb_builder.py:59)."},
+      {"id": "ar", "label": "AR placement + scale", "group": "ar", "desc": "WebXR/ARCore hit-test on a tracked surface, anchor at tap, ppm = longest plan side px / user-typed metres, optional 1:N miniature scale (livemap/ar.html:641, :848, :1885)."}
+    ],
+    "edges": [
+      ["input", "preprocess"],
+      ["input", "cubicasa"],
+      ["preprocess", "mitunet"],
+      ["mitunet", "probmap"],
+      ["probmap", "hysteresis"],
+      ["hysteresis", "thickness"],
+      ["thickness", "sealhints"],
+      ["cubicasa", "sealhints"],
+      ["sealhints", "rooms"],
+      ["rooms", "walls"],
+      ["rooms", "consensus"],
+      ["cubicasa", "consensus"],
+      ["consensus", "watershed"],
+      ["watershed", "invariants"],
+      ["walls", "invariants"],
+      ["invariants", "barrier"],
+      ["barrier", "export"],
+      ["export", "gapclose"],
+      ["gapclose", "glb"],
+      ["gapclose", "ar"]
+    ]
+  },
+  "architecture": {
+    "blocks": [
+      {"model": "MitUNet", "id": "mit_input", "label": "Input", "detail": "RGB, resized to 512x512, ImageNet normalization mean (0.485,0.456,0.406) std (0.229,0.224,0.225)", "shape": "3x512x512", "next": ["mit_s1"]},
+      {"model": "MitUNet", "id": "mit_s1", "label": "MiT-b4 stage 1", "detail": "Overlapping patch embed 7x7 stride 4; efficient self-attention (reduction ratio 8) + Mix-FFN; 3 blocks", "shape": "64 x 128x128 (1/4)", "next": ["mit_s2", "mit_d3"]},
+      {"model": "MitUNet", "id": "mit_s2", "label": "MiT-b4 stage 2", "detail": "Patch merge 3x3 stride 2; reduction ratio 4; 8 blocks", "shape": "128 x 64x64 (1/8)", "next": ["mit_s3", "mit_d2"]},
+      {"model": "MitUNet", "id": "mit_s3", "label": "MiT-b4 stage 3", "detail": "Patch merge 3x3 stride 2; reduction ratio 2; 27 blocks", "shape": "320 x 32x32 (1/16)", "next": ["mit_s4", "mit_d1"]},
+      {"model": "MitUNet", "id": "mit_s4", "label": "MiT-b4 stage 4 (bottleneck)", "detail": "Patch merge 3x3 stride 2; full attention; 3 blocks", "shape": "512 x 16x16 (1/32)", "next": ["mit_d1"]},
+      {"model": "MitUNet", "id": "mit_d1", "label": "U-Net decoder block 1 + scSE", "detail": "Upsample x2, concat skip, scSE, 2x(3x3 conv-BN-ReLU), scSE", "shape": "256 ch (1/16)", "next": ["mit_d2"]},
+      {"model": "MitUNet", "id": "mit_d2", "label": "Decoder block 2 + scSE", "detail": "Same pattern", "shape": "128 ch (1/8)", "next": ["mit_d3"]},
+      {"model": "MitUNet", "id": "mit_d3", "label": "Decoder block 3 + scSE", "detail": "Same pattern", "shape": "64 ch (1/4)", "next": ["mit_d4"]},
+      {"model": "MitUNet", "id": "mit_d4", "label": "Decoder blocks 4-5", "detail": "MiT has no 1/2-scale feature; smp feeds an empty skip there, so these blocks only upsample + convolve", "shape": "32 -> 16 ch (1/2 -> 1/1)", "next": ["mit_head"]},
+      {"model": "MitUNet", "id": "mit_head", "label": "Segmentation head", "detail": "3x3 conv to 1 channel; sigmoid applied in notebook", "shape": "1 x 512x512 wall probability", "next": []},
+      {"model": "CubiCasa", "id": "cc_input", "label": "Input", "detail": "RGB at native resolution, scaled to [-1,1] (2*x-1)", "shape": "3xHxW", "next": ["cc_stem"]},
+      {"model": "CubiCasa", "id": "cc_stem", "label": "Stem", "detail": "7x7 stride-2 conv 3->64, BN, ReLU, 2x2 max-pool, residual blocks to 256 ch", "shape": "256 x H/4", "next": ["cc_enc"]},
+      {"model": "CubiCasa", "id": "cc_enc", "label": "Hourglass encoder", "detail": "Four more 2x2 max-pools down to 1/64; residual blocks at 256 ch (512 at deepest); parallel skip branches at each scale", "shape": "512 x H/64", "next": ["cc_dec"]},
+      {"model": "CubiCasa", "id": "cc_dec", "label": "Hourglass decoder", "detail": "Four 512-ch transposed-conv x2 stages, each added to its skip branch, back to 1/4", "shape": "512 x H/4", "next": ["cc_head"]},
+      {"model": "CubiCasa", "id": "cc_head", "label": "1x1 conv head + x4 upsample", "detail": "1x1 convs 512->512->256->44, transposed conv k4 s4 back to input size", "shape": "44 x H x W", "next": ["cc_heat", "cc_room", "cc_icon"]},
+      {"model": "CubiCasa", "id": "cc_heat", "label": "21 junction heatmaps", "detail": "Sigmoid; wall/opening/icon corner junctions used by get_polygons() to build wall rectangles", "shape": "21 x H x W", "next": []},
+      {"model": "CubiCasa", "id": "cc_room", "label": "12 room classes", "detail": "Background, Outdoor, Wall, Kitchen, Living Room, Bed Room, Bath, Entry, Railing, Storage, Garage, Undefined", "shape": "12 x H x W", "next": []},
+      {"model": "CubiCasa", "id": "cc_icon", "label": "11 icon classes", "detail": "Includes Window (class 1) and Door (class 2), which PlanLiftAR uses as fixtures", "shape": "11 x H x W", "next": []}
+    ],
+    "models": [
+      {"name": "MitUNet", "role": "Primary wall segmenter; its probability map is the geometry source", "encoder": "MiT-b4 (SegFormer Mix-Transformer), transplanted from smp.Segformer into smp.Unet", "decoder": "U-Net (segmentation-models-pytorch 0.5.0)", "attention": "scSE (concurrent spatial + channel squeeze-and-excitation) in every decoder block", "heads": "1 binary wall channel", "input": "512x512 RGB", "loss": "Tversky (alpha 0.6, beta 0.4 per upstream README)", "training_data": "CubiCasa5k (this checkpoint); upstream also publishes a regional fine-tune", "weights_size_mb": 257.4, "license": "Code MIT; weights CC BY-NC 4.0 (inherited from CubiCasa5k)"},
+      {"name": "CubiCasa multi-task net", "role": "Second opinion: rooms, wall polygons, doors, windows", "encoder": "Hourglass (hg_furukawa_original, derived from Raster-to-Vector)", "decoder": "Symmetric hourglass with additive skips", "attention": "none", "heads": "44 channels split [21 heatmaps, 12 rooms, 11 icons]", "input": "native resolution RGB in [-1,1]", "loss": "Multi-task uncertainty-weighted loss (Kendall et al. 2018)", "training_data": "CubiCasa5k (5000 Finnish plans, 80+ categories)", "license": "CC BY-NC 4.0"}
+    ]
+  },
+  "charts": [
+    {
+      "id": "kaggle_run_evolution_rooms",
+      "title": "Rooms found per Kaggle run",
+      "type": "bar",
+      "xLabel": "Notebook run",
+      "yLabel": "Closed room regions",
+      "series": [{"name": "rooms (MitUNet regions)", "data": [["v3", 0], ["v4", 0], ["v5", 5], ["v6", 5], ["v7", 5], ["v8", 5], ["v9", 14]]}],
+      "caption": "v3/v4 found 0 rooms on full-sheet plan 6044: the plan filled only part of the 512x512 input. Auto-crop (v5+) and CubiCasa seal hints recovered 5 closed rooms. v9 is a different plan (10052).",
+      "source": "v3_stdout.txt, v4_stdout.txt, v5_stdout.txt, v6_out.txt, v7_out.txt, v8_out.txt, v9_out.txt"
+    },
+    {
+      "id": "kaggle_run_consensus",
+      "title": "Consensus score per Kaggle run",
+      "type": "bar",
+      "xLabel": "Notebook run",
+      "yLabel": "Consensus (matches / max room count)",
+      "series": [
+        {"name": "consensus_raw", "data": [["v6", 0.103], ["v7", 0.107], ["v8", 0.30], ["v9", 0.071]]},
+        {"name": "after watershed virtual split", "data": [["v8", 0.27], ["v9", 0.06]]}
+      ],
+      "caption": "v6 to v8 rose because of better CubiCasa room filtering (29 -> 28 -> 10 rooms counted), not because the walls changed. The 0.70 target was never reached; calibration was deferred (planliftar-v1-execution.md, Phase 2 gate).",
+      "source": "v6_out.txt, v7_out.txt, v8_out.txt, v9_out.txt"
+    },
+    {
+      "id": "healing_components",
+      "title": "Wall-mask fragments through the healing stages",
+      "type": "grouped_bar",
+      "xLabel": "Run",
+      "yLabel": "Connected wall components",
+      "series": [
+        {"name": "naive threshold 0.5", "data": [["v3 (6044 full sheet)", 10], ["v5-v8 (6044 crop)", 8], ["v9 (10052)", 6]]},
+        {"name": "hysteresis 0.25/0.50", "data": [["v3 (6044 full sheet)", 10], ["v5-v8 (6044 crop)", 8], ["v9 (10052)", 6]]},
+        {"name": "after CLOSE seal", "data": [["v3 (6044 full sheet)", 9], ["v5-v8 (6044 crop)", 7], ["v9 (10052)", 6]]}
+      ],
+      "caption": "Ideal is 1. Hysteresis did not merge any fragments on these samples; the thickness-relative CLOSE removed one. Honest result: the healing layers matter less than the seal hints on these plans.",
+      "source": "v3_stdout.txt, v5_stdout.txt, v9_out.txt"
+    },
+    {
+      "id": "wall_thickness_tmed",
+      "title": "Measured median wall thickness (t_med)",
+      "type": "bar",
+      "xLabel": "Run",
+      "yLabel": "t_med (px) / seal kernel (px)",
+      "series": [
+        {"name": "t_med px", "data": [["v3", 24.0], ["v5-v8", 22.0], ["v9", 26.0]]},
+        {"name": "seal kernel px", "data": [["v3", 37], ["v5-v8", 33], ["v9", 39]]}
+      ],
+      "caption": "All tolerances are expressed as multiples of t_med, so they adapt to each image. Kernel = int(1.5 x t_med) | 1.",
+      "source": "v3_stdout.txt, v5_stdout.txt, v9_out.txt"
+    },
+    {
+      "id": "wall_postprocess_funnel",
+      "title": "Wall run clean-up funnel (local harness)",
+      "type": "funnel",
+      "xLabel": "Stage",
+      "yLabel": "Wall runs",
+      "series": [{"name": "wall runs", "data": [["raw derived", 240], ["dedupe reversed", 146], ["axis-snap + merge collinear", 75], ["drop stubs (final)", 73]]}],
+      "caption": "Region-border tracing emits every wall roughly twice; post-processing cuts 240 runs to 73 with all tolerances in t_med units.",
+      "source": "local/out/run_log.txt"
+    },
+    {
+      "id": "graded_consensus_per_room",
+      "title": "Per-room agreement with CubiCasa (graded consensus)",
+      "type": "horizontal_bar",
+      "xLabel": "IoU-based score (0-1)",
+      "yLabel": "CubiCasa room",
+      "series": [{"name": "score", "data": [["room_004_0 bedroom", 0.748], ["room_002_0 kitchen", 0.448], ["room_010_0 room", 0.372], ["room_005_0 bathroom", 0.363], ["room_005_4 bathroom", 0.345], ["room_003_0 living_room", 0.289], ["room_010_1 room", 0.189], ["room_002_3 kitchen", 0.025], ["room_003_1 living_room", 0.0], ["room_010_6 room", 0.0], ["room_010_9 room", 0.0]]}],
+      "caption": "Area-weighted mean = 0.343 vs legacy Hungarian score 0.077. Only the bedroom clears the legacy 0.5 cutoff; the kitchen misses it by 0.052.",
+      "source": "local/out/diagnostics.json (consensus.graded_contributions), local/out/run_log.txt"
+    },
+    {
+      "id": "consensus_metric_comparison",
+      "title": "Same plan, three consensus measurements",
+      "type": "bar",
+      "xLabel": "Metric",
+      "yLabel": "Score",
+      "series": [{"name": "plan 10052", "data": [["notebook v9 (Hungarian, 14 rooms)", 0.071], ["local legacy (Hungarian, 13 rooms)", 0.077], ["local graded (area-weighted)", 0.343], ["target CONSENSUS_MIN", 0.70]]}],
+      "caption": "The legacy metric gives zero credit below IoU 0.5 and counts the larger room list as denominator; graded consensus gives partial credit and treats open-plan merges as agreement.",
+      "source": "v9_out.txt; local/out/run_log.txt; local/out/diagnostics.json (summary, cfg)"
+    },
+    {
+      "id": "resolution_invariance",
+      "title": "Resolution invariance test (normalised to 1x)",
+      "type": "grouped_bar",
+      "xLabel": "Input scale",
+      "yLabel": "Metric value normalised to 1x scale",
+      "series": [
+        {"name": "room count", "data": [[0.5, 13], [1.0, 13], [2.0, 13]]},
+        {"name": "wall run count", "data": [[0.5, 76], [1.0, 73], [2.0, 77]]},
+        {"name": "t_med / scale (px)", "data": [[0.5, 24.0], [1.0, 26.0], [2.0, 26.0]]},
+        {"name": "total wall length / scale (px)", "data": [[0.5, 12852.563], [1.0, 12979.676], [2.0, 12858.497]]},
+        {"name": "total room area / scale^2 (px^2)", "data": [[0.5, 631828.0], [1.0, 638894.0], [2.0, 644338.75]]}
+      ],
+      "caption": "Same plan run at half, native and double resolution: identical room count, wall length within 1.0%, room area within 1.1%. All metrics PASS.",
+      "source": "local/out/test_resolution_output.txt"
+    },
+    {
+      "id": "consensus_monotonicity",
+      "title": "Graded consensus vs true overlap (property test)",
+      "type": "line",
+      "xLabel": "True overlap (%)",
+      "yLabel": "Score",
+      "series": [{"name": "graded score", "data": [[10, 0.1], [20, 0.2], [30, 0.3], [40, 0.4], [50, 0.5], [60, 0.6], [70, 0.7], [80, 0.8], [90, 0.9], [100, 1.0]]}],
+      "caption": "Synthetic test: score rises steadily with overlap, with no jump at the 50% majority-ownership gate. 25-way over-segmentation scores 0.04, a clean open-plan merge scores 1.0.",
+      "source": "local/out/test_consensus_metric_output.txt"
+    },
+    {
+      "id": "gap_closure_per_plan",
+      "title": "Wall-gap closure on the bundled plans",
+      "type": "grouped_bar",
+      "xLabel": "Plan",
+      "yLabel": "Count",
+      "series": [
+        {"name": "input walls", "data": [["cubicasa (rooms-first)", 244], ["bungalow", 13], ["newri-mitunet-geometry (line-first)", 9], ["newri-reference", 9]]},
+        {"name": "connectors added", "data": [["cubicasa (rooms-first)", 4], ["bungalow", 2], ["newri-mitunet-geometry (line-first)", 6], ["newri-reference", 8]]},
+        {"name": "gaps left open (door / no evidence)", "data": [["cubicasa (rooms-first)", 0], ["bungalow", 8], ["newri-mitunet-geometry (line-first)", 6], ["newri-reference", 5]]}
+      ],
+      "caption": "Rooms-first output needs 4 connectors over 244 walls; the old line-first output needs 6 over 9 walls. Closure only fills gaps with evidence.",
+      "source": "Computed 2026-11-20 by running deliverables/plan_ops.py prepare_plan() unmodified on deliverables/livemap/plans/*.json"
+    },
+    {
+      "id": "glb_output_size",
+      "title": "Extruded 3D model size",
+      "type": "table",
+      "xLabel": "Run",
+      "yLabel": "Value",
+      "series": [
+        {"name": "wall meshes", "data": [["v7/v8 (6044)", 121], ["v9 (10052)", 244]]},
+        {"name": "vertices", "data": [["v7/v8 (6044)", 976], ["v9 (10052)", 1960]]},
+        {"name": "faces", "data": [["v7/v8 (6044)", 1464], ["v9 (10052)", 2940]]},
+        {"name": "footprint width m (at 100 px/m)", "data": [["v7/v8 (6044)", 8.142], ["v9 (10052)", 20.919]]},
+        {"name": "footprint depth m (at 100 px/m)", "data": [["v7/v8 (6044)", 10.983], ["v9 (10052)", 12.652]]}
+      ],
+      "caption": "Placeholder scale 100 px/m; real scale comes from the user in AR. Each wall is one 8-vertex, 12-triangle box, plus one floor slab (976 = 122 x 8; 1464 = 122 x 12).",
+      "source": "v7_out.txt, v8_out.txt, v9_out.txt"
+    },
+    {
+      "id": "mitunet_published_metrics",
+      "title": "MitUNet published accuracy (upstream, regional dataset)",
+      "type": "bar",
+      "xLabel": "Metric",
+      "yLabel": "%",
+      "series": [{"name": "MitUNet + Tversky", "data": [["mIoU", 87.91], ["Boundary IoU", 85.01], ["Precision", 94.82], ["Recall", 92.35], ["Accuracy", 98.86]]}],
+      "caption": "Reported by the MitUNet authors for their fine-tuned model on their regional dataset, not measured in this repo. The repo uses the CubiCasa5k-trained checkpoint.",
+      "source": "https://github.com/aliasstudio/mitunet (README results table)"
+    }
+  ],
+  "glossary": [
+    {"term": "Semantic segmentation", "def": "Labelling every pixel of an image with a class. Here: wall or not-wall."},
+    {"term": "Probability map", "def": "An image the same size as the plan where each pixel holds the model's confidence (0 to 1) that it is wall."},
+    {"term": "Encoder / decoder", "def": "The encoder shrinks the image into compact features that describe what is where; the decoder grows them back to full size to draw the mask."},
+    {"term": "U-Net", "def": "An encoder-decoder network whose decoder reuses fine detail from the encoder through skip connections. Standard for precise masks."},
+    {"term": "Transformer / self-attention", "def": "A layer that lets every image patch look at every other patch, so the model sees the whole plan's layout at once, not just a small neighbourhood."},
+    {"term": "MiT (Mix Transformer)", "def": "The SegFormer encoder: a four-stage transformer that outputs features at 1/4, 1/8, 1/16 and 1/32 of the image size. b4 is the second-largest size."},
+    {"term": "scSE attention", "def": "Concurrent spatial and channel squeeze-and-excitation: small gates that boost useful feature channels and image locations and damp background noise."},
+    {"term": "Tversky loss", "def": "A training loss that weighs missed wall pixels and false wall pixels differently (alpha 0.6 / beta 0.4), to favour thin, complete walls."},
+    {"term": "Multi-task network", "def": "One network that predicts several things at once. CubiCasa's predicts wall junctions, room types and icons (doors, windows, fixtures) from one image."},
+    {"term": "Heatmap (junction)", "def": "A per-pixel score for 'a wall corner or T-junction of this type is here'. CubiCasa joins junctions into wall rectangles."},
+    {"term": "Hysteresis thresholding", "def": "Two thresholds: pixels above the high one are wall; pixels above the low one count only if they touch confirmed wall. Heals faint breaks without adding noise."},
+    {"term": "Distance transform", "def": "For each wall pixel, the distance to the nearest non-wall pixel. Twice that value on the centreline is the wall's thickness."},
+    {"term": "Skeletonization", "def": "Thinning a shape to a one-pixel centreline. Used to sample wall thickness on the centre of each wall."},
+    {"term": "t_med", "def": "Median wall thickness in pixels for this image. Every tolerance in the pipeline is a multiple of it, so results do not depend on image resolution."},
+    {"term": "Morphological closing", "def": "Grow then shrink a mask. Gaps narrower than the kernel close; wider gaps such as doorways survive."},
+    {"term": "Connected components", "def": "Groups of touching pixels. Applied to the empty space between walls, each group is a room or the outside."},
+    {"term": "Rooms-first extraction", "def": "Find the enclosed spaces first, then derive walls from their borders. Rooms are closed by construction, so the 3D model has no accidental holes."},
+    {"term": "Hough transform", "def": "Classic line detector. The original prototype used it; it produced disconnected segments, which is why the project moved to rooms-first."},
+    {"term": "approxPolyDP", "def": "OpenCV's Douglas-Peucker simplification: turns a jagged pixel outline into a polygon with few corners."},
+    {"term": "IoU (Intersection over Union)", "def": "Overlap of two shapes divided by their combined area. 1 = identical, 0 = no overlap."},
+    {"term": "Hungarian algorithm", "def": "Finds the best one-to-one pairing between two lists (MitUNet rooms and CubiCasa rooms) maximising total IoU."},
+    {"term": "Consensus", "def": "How well the two independent models agree on the rooms. Evidence of correctness, never ground truth."},
+    {"term": "Watershed", "def": "Floods a shape from seed points; where floods meet is a dividing line. Used only to score whether a merged region splits into the rooms CubiCasa sees."},
+    {"term": "Invariants", "def": "Rules every accepted plan must satisfy regardless of any model: closed polygons, minimum room area, sane room count."},
+    {"term": "Acceptance barrier", "def": "The single decision point. Fail and the plan is rejected with machine-readable reasons; no 3D file is produced."},
+    {"term": "GLB / glTF", "def": "The standard binary 3D model file format for the web and AR viewers."},
+    {"term": "Extrusion", "def": "Turning a 2D line into a 3D box by giving it thickness and height."},
+    {"term": "WebXR / ARCore", "def": "WebXR is the browser AR standard; ARCore is Google's Android AR engine underneath it that tracks the phone and finds surfaces."},
+    {"term": "Hit test", "def": "Casting a ray from the screen centre to find where it meets a detected real surface. Where the placement ring appears."},
+    {"term": "Anchor", "def": "A point tied to a real-world spot that ARCore keeps updated as its map improves, so the model stays put."},
+    {"term": "ppm (pixels per metre)", "def": "Scale factor. The user types the building's longest real side; ppm = longest plan side in pixels / metres."},
+    {"term": "CC BY-NC 4.0", "def": "Creative Commons Attribution-NonCommercial. Free for research and teaching; not for commercial products. Applies to CubiCasa5k and every model trained on it."}
+  ],
+  "faq": [
+    {"q": "Is this 'AI'? What exactly did you train?", "a": "We did not train a model. We use two published, pretrained neural networks (MitUNet and the CubiCasa5k multi-task network) and contribute the pipeline around them: probability-map healing, rooms-first geometry, two-model consensus, an acceptance barrier and the AR client."},
+    {"q": "Why two models?", "a": "Each one makes mistakes. Where two independent models agree on a room, that is evidence it is right; where they disagree, the plan is flagged. Neither is treated as the answer key."},
+    {"q": "Why MitUNet for walls instead of CubiCasa's own walls?", "a": "MitUNet is a newer wall-specialist (transformer encoder + U-Net + attention) designed for thin structures. CubiCasa's walls are used only as sealing hints and its rooms only for scoring."},
+    {"q": "Your consensus is 0.07-0.34, below the 0.70 target. Does the pipeline fail?", "a": "The legacy score is pulled down by measurement artefacts we documented: margin regions counted as rooms, CubiCasa's own fragment rooms, and a hard 0.5 cutoff (the kitchen scored 0.448). The graded metric reports 0.343 on the same plan. The 0.70 threshold is deliberately uncalibrated until multi-sample validation, and consensus is advisory; hard invariants decide acceptance."},
+    {"q": "How do you get real-world size from an image?", "a": "We do not guess it. The export is unitless (relative_px). In AR the user types one real dimension (the building's longest side) and every wall scales from that."},
+    {"q": "Does it work on images of different resolutions?", "a": "Yes. All thresholds are multiples of measured wall thickness. Our resolution test at 0.5x, 1x and 2x gave the same 13 rooms and wall length within 1%."},
+    {"q": "What happens with open-plan living/dining areas?", "a": "They come out as one room. The pipeline never invents a wall in open space; it notes 'merged_rooms' and accepts the plan if invariants pass."},
+    {"q": "Can a bad plan produce a broken 3D model?", "a": "The acceptance barrier is the only exit. A plan that fails invariants is rejected with reasons such as open_polygon or room_below_min_area, and no geometry file is written."},
+    {"q": "Are doors walkable in AR?", "a": "Yes. Door spans are carved out of exported wall runs, and gap closure refuses to fill any gap a door sits on."},
+    {"q": "Can you sell this?", "a": "Not with the current weights. Both models are trained on CubiCasa5k, licensed CC BY-NC 4.0. A commercial launch needs retraining on owned or permissively licensed data; the pipeline code itself is unaffected."},
+    {"q": "Why does it need a GPU?", "a": "Only the two neural-network forward passes. Everything after the probability map is CPU image processing, which is why the local harness runs on a laptop from a cached map."},
+    {"q": "How accurate is MitUNet?", "a": "Its authors report 87.91% mIoU and 85.01% boundary IoU on their regional dataset. We have not measured pixel accuracy on our own data; our evaluation is geometric (closed rooms, consensus, resolution invariance)."},
+    {"q": "What are the known weaknesses?", "a": "Page-margin regions that do not touch the border can be counted as rooms (now gated by a wall-ink test), the CLOSE seal can weld narrow corridors (instrumented, not yet seen), derived walls can be slightly off-axis, and a single-point centroid filter can drop large rooms."}
+  ]
+}

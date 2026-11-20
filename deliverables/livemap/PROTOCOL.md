@@ -108,6 +108,38 @@ Emitted on: connect, every applied control patch, placement, and reset.
 panel that opens after the phone did would otherwise have nothing to show.
 Phones reply with a `state` message.
 
+### Plan — phone to viewers (added 2026-11, optional)
+
+```json
+{"type": "plan", "plan_id": "6f1c…", "name": "Flat 2B",
+ "plan": {"schema_version": "2.0", "walls": [...], "rooms": [...]},
+ "ppm": 48.2, "wall_height_m": 2.5}
+```
+
+The plan the phone has open, as stored (PlanJSON, any of the forms in
+`docs/API.md`), so a viewer can draw the same map without having the plan in
+its own library. Poses are plan px of exactly this plan. The PWA sends it on
+every (re)connect of its AR page. `ppm` (plan px per metre) and
+`wall_height_m` are optional hints; `plan_id` is the phone's project id and
+only identifies the plan, it is not a key into the viewer's library.
+
+Limits: the whole message must be at most **2 MB** of UTF-8, and a phone
+(by network address) may update the plan at most **once every 2 s**. The
+app's `/ws` hub drops a message that breaks either limit and answers the phone
+with `{"type": "plan_rejected", "reason": "..."}`; it never reaches viewers.
+Other messages are capped at 256 KB. The hub keeps only the latest plan per
+viewer (a newer plan replaces an unsent older one) and sends it before queued
+poses.
+
+Hub behaviour: the `/ws` hub (backend/server/hub.py) forwards it like any
+phone message and also **caches the latest one**, replaying it to each viewer
+right after that viewer's role tag, so a map opened after the phone entered
+AR still gets the plan. The cache is not cleared when the phone leaves. The
+legacy `server.py` hub only forwards it (no replay; its WebSocket frame limit
+is 1 MiB). Older viewers ignore it (unknown `type`), so this is backward
+compatible. A `plan` sent by a viewer is forwarded to phones as usual and is
+neither cached nor acted on.
+
 ## Testing without a phone
 
 `fake_phone.py` implements the phone side of all of the above, so the control

@@ -51,6 +51,28 @@ regenerated automatically on the next start.
 
 Dependencies: Python 3.8+, stdlib, and the `websockets` package
 (pip install websockets). `--tls` additionally needs `cryptography`.
+
+Plan-upload job stub (POST /jobs, GET /jobs/<id>)
+--------------------------------------------------
+`index.html`'s image-upload picker is a deliberate stub for a backend that
+does not exist yet: MitUNet + CubiCasa inference only runs by hand in Kaggle
+notebooks today. `planliftar-v1.md` specifies the eventual transport as a
+REST async job API (no WebSocket), so this stub mirrors that shape rather
+than inventing a different one that would need reworking later:
+
+  - POST /jobs with the image bytes as the raw body -> 202 +
+    {"job_id", "status": "queued"}.
+  - GET /jobs/<job_id> -> {"status": "queued"|"running"|"done", ...},
+    reaching {"status": "done", "result": <plan JSON>} after a short
+    simulated delay.
+
+The "result" is always `plans/bungalow.json` - a canned stand-in, never a
+real analysis of the uploaded image. Jobs live in a plain dict in memory
+(JOBS below); nothing is written to disk, and the uploaded bytes themselves
+are read into memory just long enough to discard. Because this server binds
+to 0.0.0.0 on a LAN, an unbounded read on POST /jobs would be a real DoS
+hazard even for a dev tool, so the body size is capped (MAX_UPLOAD_BYTES)
+and anything larger gets 413 before the rest of the body is read.
 """
 
 import argparse
@@ -60,10 +82,16 @@ import http.server
 import ipaddress
 import json
 import os
+import posixpath
+import re
 import socket
+import subprocess
 import ssl
 import sys
 import threading
+import time
+import urllib.parse
+import uuid
 
 import websockets
 
@@ -79,6 +107,28 @@ STATIC_DIR = os.path.dirname(os.path.abspath(__file__))
 CERT_DIR = os.path.join(STATIC_DIR, ".certs")
 CERT_FILE = os.path.join(CERT_DIR, "livemap-cert.pem")
 KEY_FILE = os.path.join(CERT_DIR, "livemap-key.pem")
+# Public CA certificate only. The CA PRIVATE key is generated in memory,
+# used once to sign the leaf, and never written anywhere - see ensure_cert.
+CA_FILE = os.path.join(CERT_DIR, "livemap-ca.pem")
+PUBLISH_CA = False   # set by --publish-ca; gates GET /cert
+
+# --------------------------------------------------------------------------
+# Plan-upload job stub state. See the module docstring for the contract.
+# --------------------------------------------------------------------------
+MAX_UPLOAD_BYTES = 5 * 1024 * 1024  # a "few MB" cap on POST /jobs bodies
+JOB_QUEUED_SECS = 1.0    # how long GET /jobs/<id> reports "queued"
+JOB_RUNNING_SECS = 1.5   # ...then "running" for this long...
+                          # ...then "done" forever after (elapsed-based, no
+                          # timer thread needed).
+JOB_PATH_RE = re.compile(r"^/jobs/([A-Za-z0-9_-]+)$")
+
+JOBS = {}  # job_id -> creation time.monotonic(), guarded by JOBS_LOCK
+JOBS_LOCK = threading.Lock()
+
+# The canned "result" every job resolves to - loaded once at startup, not
+# per-request. Never derived from an uploaded image; see module docstring.
+with open(os.path.join(STATIC_DIR, "plans", "bungalow.json"), "r", encoding="utf-8") as _f:
+    STUB_PLAN_RESULT = json.load(_f)
 
 
 # --------------------------------------------------------------------------
@@ -141,6 +191,25 @@ def cert_covers(path, ips):
     if not_after <= now:
         return False
 
+    # An earlier version made the SERVER cert itself a CA and handed that to
+    # phones - which meant the private key sitting in this directory could
+    # mint a trusted certificate for any domain at all. Reject anything of
+    # that shape so it gets regenerated in the split form below.
+    try:
+        bc = cert.extensions.get_extension_for_class(x509.BasicConstraints).value
+        if bc.ca:
+            return False
+    except x509.ExtensionNotFound:
+        pass
+    if not os.path.exists(CA_FILE):
+        return False
+    try:
+        with open(CA_FILE, "rb") as fh:
+            ca = x509.load_pem_x509_certificate(fh.read())
+        ca.extensions.get_extension_for_class(x509.NameConstraints)
+    except (OSError, ValueError, x509.ExtensionNotFound):
+        return False       # missing or unconstrained CA: regenerate
+
     try:
         san = cert.extensions.get_extension_for_class(x509.SubjectAlternativeName).value
     except x509.ExtensionNotFound:
@@ -149,11 +218,173 @@ def cert_covers(path, ips):
     return all(ip in covered for ip in ips)
 
 
+def _restrict_key_permissions(path):
+    """Make the private key owner-only, and say so plainly if that failed.
+
+    On POSIX chmod 0600 is the whole story. On Windows chmod cannot express
+    an ACL, so this shells out to icacls to strip inheritance and grant only
+    the current user. Either way the result is verified rather than assumed -
+    a silently world-readable key is the failure mode worth catching.
+    """
+    try:
+        os.chmod(path, 0o600)
+    except OSError:
+        pass
+    if os.name == "nt":
+        user = os.environ.get("USERNAME")
+        if user:
+            rc = subprocess.call(
+                ["icacls", path, "/inheritance:r", "/grant:r", user + ":F"],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
+            if rc == 0:
+                return True
+        print("[tls] WARNING: could not restrict permissions on " + path)
+        return False
+    mode = os.stat(path).st_mode & 0o777
+    if mode & 0o077:
+        print("[tls] WARNING: %s is mode %o, expected 600" % (path, mode))
+        return False
+    return True
+
+
 def ensure_cert(ips, force=False):
-    """Return (cert_path, key_path), generating a self-signed pair if needed."""
-    if not force and cert_covers(CERT_FILE, ips) and os.path.getsize(KEY_FILE or "") > 0:
-        print(f"[tls] reusing {CERT_FILE}")
+    """Return (chain_path, key_path), generating a fresh CA + leaf if needed.
+
+    A phone will only treat this origin as secure - which is what a service
+    worker, and therefore the PWA, requires - if it trusts the issuer. That
+    means something here has to be installed into the phone's trust store,
+    and what gets installed is a signing CA.
+
+    Two properties keep that from becoming a foothold on the user's phone:
+
+      * The CA private key is generated in memory, used once to sign the leaf,
+        and never written to disk. Nothing left in .certs/ can mint another
+        certificate - only the leaf key persists, and a leaf key cannot sign
+        anything. Regenerating issues a new CA which must be re-installed on
+        the phone; that is the intended trade.
+      * The CA carries NameConstraints permitting only this machine's LAN
+        addresses and localhost. An unconstrained trusted CA can vouch for ANY
+        hostname - your bank included - which is exactly why handing one out
+        is otherwise a bad idea. Constrained, the worst it can assert is a
+        machine you already control.
+    """
+    if (not force and cert_covers(CERT_FILE, ips)
+            and os.path.exists(KEY_FILE) and os.path.getsize(KEY_FILE) > 0):
+        print("[tls] reusing " + CERT_FILE)
+        _restrict_key_permissions(KEY_FILE)
         return CERT_FILE, KEY_FILE
+
+    try:
+        from cryptography import x509
+        from cryptography.x509.oid import NameOID, ExtendedKeyUsageOID
+        from cryptography.hazmat.primitives import hashes, serialization
+        from cryptography.hazmat.primitives.asymmetric import rsa
+    except ImportError:
+        sys.exit(
+            "--tls needs the `cryptography` package: pip install cryptography. "
+            "Or run without --tls and use the Chrome-flag route in README.md."
+        )
+
+    os.makedirs(CERT_DIR, exist_ok=True)
+    now = datetime.datetime.now(datetime.timezone.utc)
+    not_before = now - datetime.timedelta(minutes=5)
+    not_after = now + datetime.timedelta(days=365)
+
+    addresses = []
+    for ip in ips + ["127.0.0.1"]:
+        try:
+            addresses.append(ipaddress.ip_address(ip))
+        except ValueError:
+            continue
+    alt = [x509.DNSName("localhost")] + [x509.IPAddress(a) for a in addresses]
+
+    # --- CA: in memory only, never persisted -----------------------------
+    ca_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    ca_name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME,
+                                            "planliftar-livemap local CA")])
+    permitted = [x509.DNSName("localhost")]
+    for a in addresses:
+        suffix = "/32" if a.version == 4 else "/128"
+        permitted.append(x509.IPAddress(ipaddress.ip_network(str(a) + suffix)))
+    ca_cert = (
+        x509.CertificateBuilder()
+        .subject_name(ca_name)
+        .issuer_name(ca_name)
+        .public_key(ca_key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(not_before)
+        .not_valid_after(not_after)
+        .add_extension(x509.BasicConstraints(ca=True, path_length=0), critical=True)
+        .add_extension(
+            x509.KeyUsage(digital_signature=False, key_encipherment=False,
+                          key_cert_sign=True, crl_sign=True,
+                          content_commitment=False, data_encipherment=False,
+                          key_agreement=False, encipher_only=False,
+                          decipher_only=False),
+            critical=True,
+        )
+        # The whole point: this CA can only ever vouch for these addresses.
+        .add_extension(
+            x509.NameConstraints(permitted_subtrees=permitted, excluded_subtrees=None),
+            critical=True,
+        )
+        .sign(ca_key, hashes.SHA256())
+    )
+
+    # --- leaf: the certificate this server actually presents --------------
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    leaf = (
+        x509.CertificateBuilder()
+        .subject_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME,
+                                                    "planliftar-livemap")]))
+        .issuer_name(ca_name)
+        .public_key(key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(not_before)
+        .not_valid_after(not_after)
+        .add_extension(x509.SubjectAlternativeName(alt), critical=False)
+        .add_extension(x509.BasicConstraints(ca=False, path_length=None), critical=True)
+        .add_extension(
+            x509.KeyUsage(digital_signature=True, key_encipherment=True,
+                          key_cert_sign=False, crl_sign=False,
+                          content_commitment=False, data_encipherment=False,
+                          key_agreement=False, encipher_only=False,
+                          decipher_only=False),
+            critical=True,
+        )
+        .add_extension(
+            x509.ExtendedKeyUsage([ExtendedKeyUsageOID.SERVER_AUTH]),
+            critical=False,
+        )
+        .sign(ca_key, hashes.SHA256())
+    )
+    del ca_key      # nothing can sign with this CA again
+
+    key_pem = key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.TraditionalOpenSSL,
+        encryption_algorithm=serialization.NoEncryption(),
+    )
+    ca_pem = ca_cert.public_bytes(serialization.Encoding.PEM)
+    # Leaf first, then issuer: the order load_cert_chain expects.
+    chain_pem = leaf.public_bytes(serialization.Encoding.PEM) + ca_pem
+
+    # Write the key FIRST and each via temp-then-rename. A crash between the
+    # writes used to leave a valid-looking cert next to a missing key, which
+    # the reuse check above happily accepted and then failed to load.
+    for path, blob in ((KEY_FILE, key_pem), (CERT_FILE, chain_pem), (CA_FILE, ca_pem)):
+        tmp = path + ".tmp"
+        with open(tmp, "wb") as fh:
+            fh.write(blob)
+        os.replace(tmp, path)
+    _restrict_key_permissions(KEY_FILE)
+
+    print("[tls] issued a leaf for %s from a single-use local CA" % ", ".join(ips))
+    print("[tls]   CA constrained to: %s, localhost"
+          % ", ".join(str(a) for a in addresses))
+    print("[tls]   CA private key was never written to disk")
+    return CERT_FILE, KEY_FILE
 
     try:
         from cryptography import x509
@@ -187,7 +418,21 @@ def ensure_cert(ips, force=False):
         .not_valid_before(now - datetime.timedelta(minutes=5))
         .not_valid_after(now + datetime.timedelta(days=365))
         .add_extension(x509.SubjectAlternativeName(alt), critical=False)
-        .add_extension(x509.BasicConstraints(ca=False, path_length=None), critical=True)
+        # ca=True is what lets this be installed as a trusted certificate on
+        # a phone. Chrome refuses to register a service worker on an origin
+        # whose certificate it distrusts - clicking through the interstitial
+        # is not enough - so without this the PWA can never install and the
+        # AR view can never work offline. The chain is length 1: this cert
+        # signs itself, and once it is in the trust store it validates.
+        .add_extension(x509.BasicConstraints(ca=True, path_length=0), critical=True)
+        .add_extension(
+            x509.KeyUsage(digital_signature=True, key_encipherment=True,
+                          key_cert_sign=True, crl_sign=True,
+                          content_commitment=False, data_encipherment=False,
+                          key_agreement=False, encipher_only=False,
+                          decipher_only=False),
+            critical=True,
+        )
         .sign(key, hashes.SHA256())
     )
 
@@ -228,8 +473,158 @@ class QuietHandler(http.server.SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=STATIC_DIR, **kwargs)
 
+    def address_string(self):
+        """Return the raw client IP, skipping BaseHTTPRequestHandler's reverse-DNS.
+
+        The default implementation calls socket.getfqdn(), which for a LAN address
+        with no PTR record blocks until the resolver times out - measured at ~4.5s
+        for 192.168.x.x here, against 0.007s for 127.0.0.1 (the hosts file), which
+        is why this is invisible when testing from the laptop and crippling from
+        the phone. send_response() calls log_request() BEFORE writing the body, so
+        that delay lands on every single request: every page load, every plan
+        fetch, and every /jobs poll.
+        """
+        return self.client_address[0]
+
     def log_message(self, fmt, *args):
         print(f"[http] {self.address_string()} - {fmt % args}")
+
+    def _send_json(self, status, payload):
+        body = json.dumps(payload).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    # -- GET /jobs/<id>, else fall through to normal static-file serving. --
+    # Anything under a dot-directory is refused before the static handler sees
+    # it. This is not hypothetical tidiness: .certs/ sits inside the served
+    # directory, so GET /.certs/livemap-key.pem returned the server's TLS
+    # PRIVATE KEY, with a 200, to anyone on the LAN. Being gitignored kept it
+    # out of the repo and did nothing at all about the network.
+    #
+    # Checked per path SEGMENT on the already-unquoted, normalised path, so
+    # neither %2e%2e nor a nested a/.certs/b slips past.
+    def _is_hidden_path(self, path):
+        parts = posixpath.normpath(urllib.parse.unquote(path)).split("/")
+        return any(part.startswith(".") and part not in ("", ".", "..") for part in parts)
+
+    def do_GET(self):
+        path = urllib.parse.urlsplit(self.path).path
+        if self._is_hidden_path(path):
+            self.send_error(404, "not found")
+            return
+        if path == "/cert":
+            self._handle_cert()
+            return
+        match = JOB_PATH_RE.match(path)
+        if match:
+            self._handle_job_status(match.group(1))
+            return
+        super().do_GET()
+
+    def _handle_cert(self):
+        """Hand out the local CA certificate so a phone can trust this origin.
+
+        Installing this makes the phone accept THIS machine's LAN address
+        without an interstitial, which is what lets a service worker register
+        and the PWA install. Handing someone a CA to trust is a real decision,
+        so three things constrain it:
+
+          * It is off unless --publish-ca was passed. Distributing trust
+            should be a thing you asked for, not a side effect of --tls.
+          * The CA is name-constrained to this machine's addresses, so it
+            cannot vouch for any other host even if someone gets hold of it.
+          * Its private key was never written to disk (see ensure_cert), so
+            possession of this file confers no signing ability at all.
+
+        Served as DER, the form Android's certificate installer expects. Only
+        the CA's PUBLIC certificate is served; CERT_FILE and KEY_FILE are not
+        reachable through this route or any other.
+        """
+        if not PUBLISH_CA:
+            self.send_error(404, "certificate publishing is off; restart with --publish-ca")
+            return
+        try:
+            with open(CA_FILE, "rb") as fh:
+                pem = fh.read()
+            from cryptography import x509
+            from cryptography.hazmat.primitives.serialization import Encoding
+            der = x509.load_pem_x509_certificate(pem).public_bytes(Encoding.DER)
+        except Exception as exc:                      # no cert, or no cryptography
+            self.send_error(404, "no certificate available (%s)" % exc.__class__.__name__)
+            return
+        self.send_response(200)
+        self.send_header("Content-Type", "application/x-x509-ca-cert")
+        self.send_header("Content-Length", str(len(der)))
+        self.send_header("Content-Disposition", 'attachment; filename="planliftar.crt"')
+        self.end_headers()
+        self.wfile.write(der)
+
+    def do_HEAD(self):
+        if self._is_hidden_path(urllib.parse.urlsplit(self.path).path):
+            self.send_error(404, "not found")
+            return
+        super().do_HEAD()
+
+    # -- POST /jobs (image-upload job stub); nothing else accepts POST. --
+    def do_POST(self):
+        path = urllib.parse.urlsplit(self.path).path
+        if path == "/jobs":
+            self._handle_job_create()
+            return
+        self.send_error(404, "not found")
+
+    def _handle_job_create(self):
+        length_header = self.headers.get("Content-Length")
+        try:
+            content_length = int(length_header)
+        except (TypeError, ValueError):
+            self._send_json(411, {"error": "Content-Length required"})
+            self.close_connection = True
+            return
+
+        if content_length > MAX_UPLOAD_BYTES:
+            # Reject BEFORE reading the body - reading an attacker-declared
+            # multi-GB Content-Length just to discard it is itself the
+            # hazard being guarded against. Closing the connection avoids
+            # the unread body desyncing the next request on this socket.
+            self._send_json(
+                413,
+                {"error": f"upload exceeds {MAX_UPLOAD_BYTES} byte limit"},
+            )
+            self.close_connection = True
+            return
+
+        body = self.rfile.read(content_length)
+        job_id = uuid.uuid4().hex
+        with JOBS_LOCK:
+            JOBS[job_id] = time.monotonic()
+        print(f"[jobs] created {job_id} ({len(body)} bytes received, discarded - stub, no inference)")
+        self._send_json(202, {"job_id": job_id, "status": "queued"})
+
+    def _handle_job_status(self, job_id):
+        with JOBS_LOCK:
+            created = JOBS.get(job_id)
+        if created is None:
+            self._send_json(404, {"error": "unknown job_id"})
+            return
+
+        elapsed = time.monotonic() - created
+        if elapsed < JOB_QUEUED_SECS:
+            status = "queued"
+        elif elapsed < JOB_QUEUED_SECS + JOB_RUNNING_SECS:
+            status = "running"
+        else:
+            status = "done"
+
+        payload = {"job_id": job_id, "status": status}
+        if status == "done":
+            # Always the canned sample - see module docstring. This is a
+            # stub, not inference over whatever image was uploaded.
+            payload["result"] = STUB_PLAN_RESULT
+        self._send_json(200, payload)
 
 
 def run_http_server(ssl_ctx=None):
@@ -357,7 +752,17 @@ if __name__ == "__main__":
         help="serve HTTPS/WSS with a self-signed cert, so a phone on a hotspot "
              "gets the secure context WebXR needs without a USB cable",
     )
+    parser.add_argument(
+        "--publish-ca",
+        action="store_true",
+        help="serve the local CA certificate at GET /cert so a phone can trust "
+             "this origin (needed for the PWA to install). Off by default: "
+             "handing out a certificate to trust should be deliberate.",
+    )
     args = parser.parse_args()
+    globals()["PUBLISH_CA"] = args.publish_ca   # read by the request handler
+    if PUBLISH_CA and not args.tls:
+        sys.exit("--publish-ca only makes sense with --tls")
 
     try:
         asyncio.run(main(args.tls))

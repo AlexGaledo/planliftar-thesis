@@ -1,0 +1,414 @@
+.page {
+  max-width: 1120px;
+}
+.toc ol {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+.toc a {
+  display: inline-flex;
+  min-height: var(--touch);
+  align-items: center;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--ink);
+  border-radius: 999px;
+  text-decoration: none;
+  font-size: var(--step--1);
+  font-weight: 600;
+}
+.toc a:hover {
+  background: var(--ink);
+  color: var(--paper);
+}
+
+.section {
+  scroll-margin-top: var(--space-5);
+  display: grid;
+  gap: var(--space-4);
+  padding-top: var(--space-6);
+  border-top: var(--stroke) solid var(--ink);
+}
+.prose {
+  max-width: 68ch;
+}
+.prose p {
+  margin: 0 0 var(--space-3);
+}
+.prose ul {
+  margin: 0;
+  padding-left: 1.2em;
+  display: grid;
+  gap: var(--space-2);
+}
+.twoUp {
+  display: grid;
+  gap: var(--space-6);
+}
+@media (min-width: 960px) {
+  .twoUp {
+    grid-template-columns: 1fr 1fr;
+    align-items: start;
+  }
+}
+.twoUp h3 {
+  font-size: var(--step-1);
+  margin-bottom: var(--space-2);
+}
+
+/* ---- diagrams ---- */
+.diagram {
+  margin: 0;
+  display: grid;
+  gap: var(--space-3);
+  min-width: 0;
+}
+.diagramScroll {
+  overflow-x: auto;
+}
+/* Only shown when the flowchart is wider than the screen (phones). */
+.scrollHint {
+  display: none;
+}
+@media (max-width: 560px) {
+  .scrollHint {
+    display: block;
+  }
+}
+.axisTitle {
+  margin: 0 0 var(--space-1);
+  font-size: 12px;
+  color: var(--graphite);
+}
+.pipelineSvg {
+  width: 100%;
+  min-width: 520px;
+  max-width: 720px;
+  height: auto;
+  display: block;
+  margin: 0 auto;
+}
+.edge {
+  fill: none;
+  stroke: var(--graphite);
+  stroke-width: 1.5;
+}
+.arrowHead {
+  fill: var(--graphite);
+}
+.node {
+  cursor: pointer;
+}
+.node rect {
+  fill: var(--paper);
+  stroke: var(--ink);
+  stroke-width: 1.5;
+}
+.node text {
+  fill: var(--ink);
+  font-size: 14px;
+  font-weight: 600;
+  text-anchor: middle;
+  dominant-baseline: middle;
+}
+.node[data-group="neural"] rect {
+  fill: var(--ink);
+}
+.node[data-group="neural"] text {
+  fill: var(--paper);
+}
+.node[data-group="check"] rect {
+  stroke-dasharray: 5 3;
+}
+.node[data-selected="true"] rect {
+  stroke: var(--live);
+  stroke-width: 3;
+}
+.node:focus-visible {
+  outline: none;
+}
+.node:focus-visible rect {
+  stroke: var(--live);
+  stroke-width: 4;
+}
+.legend {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-5);
+  font-size: var(--step--1);
+}
+.legend li {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.keyNeural,
+.keyCheck,
+.keyPlain {
+  width: 22px;
+  height: 14px;
+  border: 1.5px solid var(--ink);
+  border-radius: 2px;
+}
+.keyNeural {
+  background: var(--ink);
+}
+.keyCheck {
+  border-style: dashed;
+}
+.nodeDetail {
+  border-left: 3px solid var(--live);
+  padding: var(--space-2) var(--space-3);
+  background: var(--wash);
+  max-width: 68ch;
+}
+.nodeDetail p {
+  margin: var(--space-1) 0 0;
+}
+
+/* MitUNet U */
+.uGrid {
+  display: grid;
+  gap: var(--space-2);
+}
+.uRow {
+  display: grid;
+  grid-template-columns: 1fr 44px 1fr;
+  align-items: center;
+  /* deeper rows are narrower: draws the U */
+  padding-inline: calc(var(--depth) * 10px);
+}
+.uSkip {
+  text-align: center;
+  font-size: 11px;
+  color: var(--graphite);
+  border-top: 1.5px dashed var(--graphite);
+  line-height: 1.6;
+}
+.block {
+  border: 1.5px solid var(--ink);
+  border-radius: var(--radius-s);
+  padding: var(--space-2);
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: var(--step--1);
+}
+.block[data-side="enc"] {
+  background: var(--ink);
+  color: var(--paper);
+}
+
+/* CubiCasa hourglass */
+.hourglass {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+.hgStep {
+  display: grid;
+  justify-items: center;
+  gap: var(--space-1);
+  flex: 1 1 80px;
+  text-align: center;
+}
+.hgBox {
+  width: 100%;
+  min-height: 40px;
+  display: grid;
+  place-items: center;
+  border: 1.5px solid var(--ink);
+  border-radius: var(--radius-s);
+  padding: var(--space-1);
+  font-size: var(--step--1);
+  font-weight: 600;
+}
+.hgHeads {
+  display: grid;
+  gap: var(--space-1);
+  flex: 1 1 120px;
+}
+.hgHead {
+  border: 1.5px dashed var(--ink);
+  border-radius: var(--radius-s);
+  padding: var(--space-1) var(--space-2);
+  font-size: var(--step--1);
+}
+.blockList {
+  margin: var(--space-2) 0 0;
+  display: grid;
+  gap: var(--space-2);
+  font-size: var(--step--1);
+}
+.blockList dt {
+  font-weight: 700;
+}
+.blockList dd {
+  margin: 0;
+}
+
+/* Anchoring sketch */
+.anchorSvg {
+  width: 100%;
+  height: auto;
+  max-width: 520px;
+}
+.anchorArm {
+  stroke: var(--graphite);
+  stroke-width: 1.5;
+  stroke-dasharray: 4 3;
+}
+.anchorArmMoved {
+  stroke: var(--ink);
+  stroke-width: 1.5;
+}
+.anchorArc {
+  fill: none;
+  stroke: var(--ink);
+}
+.anchorDot {
+  fill: var(--live);
+}
+.anchorWall {
+  fill: var(--rule);
+}
+.anchorWallMoved {
+  fill: var(--ink);
+}
+.anchorText {
+  fill: var(--ink);
+  font-size: 13px;
+}
+
+/* ---- charts ---- */
+.resultGroup {
+  display: grid;
+  gap: var(--space-3);
+}
+.groupTitle {
+  font-size: var(--step-1);
+  margin-top: var(--space-3);
+}
+.chartGrid {
+  display: grid;
+  gap: var(--space-5);
+}
+@media (min-width: 960px) {
+  .chartGrid {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+.chart {
+  margin: 0;
+  display: grid;
+  gap: var(--space-2);
+  align-content: start;
+  min-width: 0;
+  padding: var(--space-4);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-s);
+}
+.chartTitle {
+  font-size: var(--step-0);
+  font-stretch: 100%;
+}
+.plot {
+  min-width: 0;
+}
+.tooltip {
+  background: var(--paper);
+  color: var(--ink);
+  border: 1px solid var(--ink);
+  border-radius: var(--radius-s);
+  padding: var(--space-2) var(--space-3);
+  font-size: 13px;
+  display: grid;
+  gap: 2px;
+}
+.tooltipRow {
+  display: grid;
+  grid-template-columns: 10px auto auto;
+  gap: var(--space-2);
+  align-items: center;
+}
+.tooltipValue {
+  font-weight: 700;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+}
+.dataDetails summary {
+  cursor: pointer;
+  font-size: var(--step--1);
+  font-weight: 600;
+  min-height: var(--touch);
+  display: flex;
+  align-items: center;
+}
+.tableWrap {
+  overflow-x: auto;
+}
+.table {
+  border-collapse: collapse;
+  font-size: var(--step--1);
+  font-variant-numeric: tabular-nums;
+  min-width: 100%;
+}
+.table th,
+.table td {
+  text-align: left;
+  padding: var(--space-1) var(--space-3) var(--space-1) 0;
+  border-bottom: 1px solid var(--rule);
+}
+.table td {
+  text-align: right;
+}
+
+/* ---- glossary / faq ---- */
+.glossary {
+  margin: 0;
+  display: grid;
+  gap: var(--space-3) var(--space-6);
+}
+@media (min-width: 760px) {
+  .glossary {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+.glossary dt {
+  font-weight: 700;
+}
+.glossary dd {
+  margin: 0;
+  color: var(--graphite);
+}
+.faq {
+  display: grid;
+  max-width: 76ch;
+}
+.faq details {
+  border-bottom: 1px solid var(--rule);
+}
+.faq summary {
+  cursor: pointer;
+  font-weight: 700;
+  min-height: var(--touch);
+  display: flex;
+  align-items: center;
+  padding: var(--space-2) 0;
+}
+.faq p {
+  margin: 0 0 var(--space-3);
+}

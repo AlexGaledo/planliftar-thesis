@@ -1,0 +1,87 @@
+.section {
+  display: grid;
+  gap: var(--space-3);
+  justify-items: start;
+  padding-top: var(--space-5);
+  border-top: var(--stroke) solid var(--ink);
+}
+.section > * {
+  max-width: 100%;
+}
+.section :global(form) {
+  width: 100%;
+}
+
+.dropzone {
+  display: grid;
+  gap: var(--space-3);
+  justify-items: start;
+  padding: var(--space-4);
+  border: var(--stroke) dashed var(--ink);
+  border-radius: var(--radius-m);
+}
+.dropzone[data-has-file="true"] {
+  border-style: solid;
+}
+.preview {
+  max-height: 280px;
+  width: auto;
+  border: 1px solid var(--rule);
+  background: #fff;
+}
+
+.samples {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  display: grid;
+}
+.samples li {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--space-4);
+  padding: var(--space-3) 0;
+  border-bottom: 1px solid var(--rule);
+}
+
+/* Job progress */
+.progressCard {
+  display: grid;
+  gap: var(--space-4);
+  padding: var(--space-5);
+  border: var(--stroke) solid var(--ink);
+  border-radius: var(--radius-m);
+}
+.stages {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--space-2);
+}
+.stages li {
+  display: flex;
+  gap: var(--space-3);
+  align-items: baseline;
+  color: var(--graphite);
+}
+.stages li[data-state="done"] {
+  color: var(--ink);
+}
+.stages li[data-state="current"] {
+  color: var(--ink);
+  font-weight: 700;
+}
+.marker {
+  width: 1.25em;
+  flex: none;
+  text-align: center;
+}
+.percent {
+  font-size: var(--step-4);
+  font-weight: 800;
+  font-stretch: 125%;
+  line-height: 1;
+}

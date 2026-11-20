@@ -1,0 +1,63 @@
+/* Column flex so the canvas takes all height left after the header (and the
+   optional error notice), whichever of them are present. */
+.page {
+  display: flex;
+  flex-direction: column;
+  height: calc(100dvh - var(--tabbar-h) - var(--safe-b));
+  padding: var(--space-3) var(--space-4) var(--space-4);
+  gap: var(--space-3);
+}
+@media (min-width: 900px) {
+  .page {
+    height: 100dvh;
+    padding: var(--space-5) var(--space-6);
+  }
+}
+.bar {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: var(--space-3);
+}
+.title {
+  font-size: var(--step-2);
+}
+.stage {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 320px;
+  border: var(--stroke) solid var(--ink);
+  border-radius: var(--radius-s);
+  overflow: hidden;
+  background: #f4f4f4;
+  touch-action: none;
+}
+.stage canvas {
+  max-width: none;
+}
+.hint {
+  position: absolute;
+  left: var(--space-3);
+  bottom: var(--space-3);
+  margin: 0;
+  padding: var(--space-1) var(--space-2);
+  background: rgb(255 255 255 / 0.85);
+  color: #000;
+  font-size: var(--step--1);
+  border-radius: var(--radius-s);
+  pointer-events: none;
+}
+.label {
+  padding: 2px 8px;
+  background: #fff;
+  color: #000;
+  border: 1px solid #000;
+  border-radius: 2px;
+  font-family: var(--font);
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+  pointer-events: none;
+  user-select: none;
+}
