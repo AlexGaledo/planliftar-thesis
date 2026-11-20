@@ -5,3 +5,4 @@ coverage/
 *.local
 .vercel/
 screenshots/
+e2e-results/
