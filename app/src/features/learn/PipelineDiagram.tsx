@@ -7,7 +7,7 @@
  * a step to read what it does; the same text is in the list below the
  * diagram for screen readers.
  */
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { NODE_H, NODE_W, ROW_H, WIDTH, layoutPipeline } from "./pipelineLayout";
 import { viz } from "./vizData";
 import styles from "./learn.module.css";
@@ -30,10 +30,18 @@ export function PipelineDiagram() {
   const [selected, setSelected] = useState<string>("mitunet");
   const current = nodes.find((n) => n.id === selected);
   const height = rows * ROW_H + 8;
+  // On a phone the chart is wider than the screen. Start scrolled to the
+  // middle, where the main line of steps runs, instead of clipping it.
+  const scroller = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = scroller.current;
+    if (el && el.scrollWidth > el.clientWidth) el.scrollLeft = (el.scrollWidth - el.clientWidth) / 2;
+  }, []);
 
   return (
     <figure className={styles.diagram}>
-      <div className={styles.diagramScroll}>
+      <p className={`small muted ${styles.scrollHint}`}>Swipe sideways to see the side branches.</p>
+      <div className={styles.diagramScroll} ref={scroller} tabIndex={0} aria-label="Pipeline flowchart, scrolls sideways">
         <svg viewBox={`0 0 ${WIDTH} ${height}`} className={styles.pipelineSvg} role="group" aria-label="Pipeline flowchart. Each step is a button that shows its description.">
           <defs>
             <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">

@@ -11,7 +11,7 @@
 }
 .toc a {
   display: inline-flex;
-  min-height: 36px;
+  min-height: var(--touch);
   align-items: center;
   padding: 0 var(--space-3);
   border: 1px solid var(--ink);
@@ -68,6 +68,20 @@
 }
 .diagramScroll {
   overflow-x: auto;
+}
+/* Only shown when the flowchart is wider than the screen (phones). */
+.scrollHint {
+  display: none;
+}
+@media (max-width: 560px) {
+  .scrollHint {
+    display: block;
+  }
+}
+.axisTitle {
+  margin: 0 0 var(--space-1);
+  font-size: 12px;
+  color: var(--graphite);
 }
 .pipelineSvg {
   width: 100%;
@@ -339,7 +353,7 @@
   cursor: pointer;
   font-size: var(--step--1);
   font-weight: 600;
-  min-height: 36px;
+  min-height: var(--touch);
   display: flex;
   align-items: center;
 }

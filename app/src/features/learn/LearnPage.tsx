@@ -22,6 +22,10 @@ const SECTIONS = [
   { id: "faq", label: "Questions" },
 ];
 
+/** Plain version of viz.meta.note (which speaks of JSON keys) for the panel. */
+const RESULTS_NOTE =
+  "Every number below is copied from a saved output file of a notebook or test run, named under each chart, or was computed by running the project's code unchanged. Kaggle runs v3 to v8 use CubiCasa5k sample 6044 (an architectural drawing); v9 and the local runs use sample 10052 (a colourful plan), so the two groups are not directly comparable.";
+
 const RESULT_GROUPS: { title: string; intro: string; ids: string[] }[] = [
   {
     title: "Finding rooms",
@@ -107,7 +111,7 @@ export function LearnPage() {
 
       <section id="results" className={styles.section}>
         <h2>What the runs show</h2>
-        <p className={`small muted ${styles.prose}`}>{viz.meta.note}</p>
+        <p className={`small muted ${styles.prose}`}>{RESULTS_NOTE}</p>
         {RESULT_GROUPS.map((g) => (
           <div key={g.title} className={styles.resultGroup}>
             <h3 className={styles.groupTitle}>{g.title}</h3>

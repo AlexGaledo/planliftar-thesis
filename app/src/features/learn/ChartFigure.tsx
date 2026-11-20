@@ -9,7 +9,19 @@
  * Every chart has a hover tooltip, a legend when there are 2+ series, and a
  * "Show the numbers" table so nothing depends on colour or hover alone.
  */
-import { Bar, BarChart, CartesianGrid, Legend, Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Legend,
+  Line,
+  LineChart,
+  ReferenceLine,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
 import { normaliseToBase, toRows, type Row, type VizChart } from "./vizData";
 import { useChartColors, type ChartColors } from "./useChartColors";
 import styles from "./learn.module.css";
@@ -47,13 +59,25 @@ export function ChartFigure({ chart }: { chart: VizChart }) {
       </h3>
       {chart.type !== "table" && (
         <div className={styles.plot} role="img" aria-label={`${chart.title}. ${chart.caption}`}>
-          <ChartBody chart={chart} rows={rows} seriesNames={seriesNames} colors={colors} normalised={normalised} target={target?.value} />
+          <ChartBody
+            chart={chart}
+            rows={rows}
+            seriesNames={seriesNames}
+            colors={colors}
+            normalised={normalised}
+            target={target?.value}
+          />
         </div>
       )}
       <figcaption className="small">
         {chart.caption} <span className="muted">Source: {chart.source}</span>
       </figcaption>
-      <DataTable chart={chart} rows={rows} seriesNames={seriesNames} open={chart.type === "table"} />
+      <DataTable
+        chart={chart}
+        rows={rows}
+        seriesNames={seriesNames}
+        open={chart.type === "table"}
+      />
     </figure>
   );
 }
@@ -70,43 +94,106 @@ interface BodyProps {
 function ChartBody({ chart, rows, seriesNames, colors, normalised, target }: BodyProps) {
   const multi = seriesNames.length > 1;
   const fill = (i: number) => (multi ? colors.series[i % 3] : colors.ink);
-  const axis = { stroke: colors.muted, tick: { fill: colors.muted, fontSize: AXIS_FONT }, tickLine: false };
-  const tooltip = <Tooltip content={<ChartTooltip />} cursor={{ fill: colors.grid, stroke: colors.grid }} />;
-  const legend = multi ? <Legend wrapperStyle={{ fontSize: 13, color: colors.ink }} iconType="square" /> : null;
+  const axis = {
+    stroke: colors.muted,
+    tick: { fill: colors.muted, fontSize: AXIS_FONT },
+    tickLine: false,
+  };
+  const tooltip = (
+    <Tooltip content={<ChartTooltip />} cursor={{ fill: colors.grid, stroke: colors.grid }} />
+  );
+  // Legend on top, text in ink: below the plot it collided with the x-axis
+  // title on phones, and series-coloured text failed contrast on white.
+  const legend = multi ? (
+    <Legend
+      verticalAlign="top"
+      wrapperStyle={{ fontSize: 13, paddingBottom: 8 }}
+      iconType="square"
+      formatter={(value: string) => <span style={{ color: colors.ink }}>{value}</span>}
+    />
+  ) : null;
+  // The value-axis title sits above the plot as text: rotated inside a 390 px
+  // wide chart it overlapped the tick numbers.
   const yLabel = normalised ? "Value relative to 1x" : chart.yLabel;
+  const yTitle = <p className={styles.axisTitle}>{yLabel}</p>;
 
   if (chart.type === "line") {
     return (
-      <ResponsiveContainer width="100%" height={280}>
-        <LineChart data={rows} margin={{ top: 8, right: 16, bottom: 24, left: 8 }}>
-          <CartesianGrid stroke={colors.grid} vertical={false} />
-          <XAxis dataKey="x" {...axis} label={{ value: chart.xLabel, position: "insideBottom", offset: -12, fill: colors.muted, fontSize: AXIS_FONT }} />
-          <YAxis {...axis} width={40} />
-          {tooltip}
-          {legend}
-          {seriesNames.map((n, i) => (
-            <Line key={n} dataKey={n} stroke={fill(i)} strokeWidth={2} dot={{ r: 4, fill: fill(i), stroke: colors.paper, strokeWidth: 2 }} isAnimationActive={false} />
-          ))}
-        </LineChart>
-      </ResponsiveContainer>
+      <>
+        {yTitle}
+        <ResponsiveContainer width="100%" height={280}>
+          <LineChart data={rows} margin={{ top: 8, right: 16, bottom: 24, left: 8 }}>
+            <CartesianGrid stroke={colors.grid} vertical={false} />
+            <XAxis
+              dataKey="x"
+              {...axis}
+              label={{
+                value: chart.xLabel,
+                position: "insideBottom",
+                offset: -12,
+                fill: colors.muted,
+                fontSize: AXIS_FONT,
+              }}
+            />
+            <YAxis {...axis} width={40} />
+            {tooltip}
+            {legend}
+            {seriesNames.map((n, i) => (
+              <Line
+                key={n}
+                dataKey={n}
+                stroke={fill(i)}
+                strokeWidth={2}
+                dot={{ r: 4, fill: fill(i), stroke: colors.paper, strokeWidth: 2 }}
+                isAnimationActive={false}
+              />
+            ))}
+          </LineChart>
+        </ResponsiveContainer>
+      </>
     );
   }
 
   // Funnel and horizontal bars read better sideways: long category names fit.
-  const horizontal = chart.type === "horizontal_bar" || chart.type === "funnel" || rows.some((r) => r.x.length > 16);
+  const horizontal =
+    chart.type === "horizontal_bar" || chart.type === "funnel" || rows.some((r) => r.x.length > 16);
   if (horizontal) {
     const height = Math.max(200, rows.length * (multi ? 22 * seriesNames.length + 16 : 34) + 60);
     return (
       <ResponsiveContainer width="100%" height={height}>
-        <BarChart data={rows} layout="vertical" margin={{ top: 8, right: 24, bottom: 8, left: 8 }} barGap={2}>
+        <BarChart
+          data={rows}
+          layout="vertical"
+          margin={{ top: 8, right: 24, bottom: 8, left: 8 }}
+          barGap={2}
+        >
           <CartesianGrid stroke={colors.grid} horizontal={false} />
           <XAxis type="number" {...axis} />
           <YAxis type="category" dataKey="x" {...axis} width={150} interval={0} />
           {tooltip}
           {legend}
-          {target !== undefined && <ReferenceLine x={target} stroke={colors.ink} strokeDasharray="4 3" label={{ value: `target ${target}`, fill: colors.ink, fontSize: AXIS_FONT, position: "top" }} />}
+          {target !== undefined && (
+            <ReferenceLine
+              x={target}
+              stroke={colors.ink}
+              strokeDasharray="4 3"
+              label={{
+                value: `target ${target}`,
+                fill: colors.ink,
+                fontSize: AXIS_FONT,
+                position: "top",
+              }}
+            />
+          )}
           {seriesNames.map((n, i) => (
-            <Bar key={n} dataKey={n} fill={fill(i)} radius={HBAR_RADIUS} maxBarSize={22} isAnimationActive={false} />
+            <Bar
+              key={n}
+              dataKey={n}
+              fill={fill(i)}
+              radius={HBAR_RADIUS}
+              maxBarSize={22}
+              isAnimationActive={false}
+            />
           ))}
         </BarChart>
       </ResponsiveContainer>
@@ -114,19 +201,52 @@ function ChartBody({ chart, rows, seriesNames, colors, normalised, target }: Bod
   }
 
   return (
-    <ResponsiveContainer width="100%" height={280}>
-      <BarChart data={rows} margin={{ top: 16, right: 16, bottom: 24, left: 8 }} barGap={2}>
-        <CartesianGrid stroke={colors.grid} vertical={false} />
-        <XAxis dataKey="x" {...axis} interval={0} label={{ value: chart.xLabel, position: "insideBottom", offset: -12, fill: colors.muted, fontSize: AXIS_FONT }} />
-        <YAxis {...axis} width={48} label={{ value: yLabel, angle: -90, position: "insideLeft", fill: colors.muted, fontSize: AXIS_FONT, dx: 4, dy: 60 }} />
-        {tooltip}
-        {legend}
-        {target !== undefined && <ReferenceLine y={target} stroke={colors.ink} strokeDasharray="4 3" label={{ value: `target ${target}`, fill: colors.ink, fontSize: AXIS_FONT, position: "insideTopRight" }} />}
-        {seriesNames.map((n, i) => (
-          <Bar key={n} dataKey={n} fill={fill(i)} radius={BAR_RADIUS} maxBarSize={48} isAnimationActive={false} />
-        ))}
-      </BarChart>
-    </ResponsiveContainer>
+    <>
+      {yTitle}
+      <ResponsiveContainer width="100%" height={280}>
+        <BarChart data={rows} margin={{ top: 16, right: 16, bottom: 24, left: 8 }} barGap={2}>
+          <CartesianGrid stroke={colors.grid} vertical={false} />
+          <XAxis
+            dataKey="x"
+            {...axis}
+            interval={0}
+            label={{
+              value: chart.xLabel,
+              position: "insideBottom",
+              offset: -12,
+              fill: colors.muted,
+              fontSize: AXIS_FONT,
+            }}
+          />
+          <YAxis {...axis} width={48} />
+          {tooltip}
+          {legend}
+          {target !== undefined && (
+            <ReferenceLine
+              y={target}
+              stroke={colors.ink}
+              strokeDasharray="4 3"
+              label={{
+                value: `target ${target}`,
+                fill: colors.ink,
+                fontSize: AXIS_FONT,
+                position: "insideTopRight",
+              }}
+            />
+          )}
+          {seriesNames.map((n, i) => (
+            <Bar
+              key={n}
+              dataKey={n}
+              fill={fill(i)}
+              radius={BAR_RADIUS}
+              maxBarSize={48}
+              isAnimationActive={false}
+            />
+          ))}
+        </BarChart>
+      </ResponsiveContainer>
+    </>
   );
 }
 
@@ -137,7 +257,15 @@ interface TooltipEntry {
 }
 
 /** Text in ink; the coloured square beside each row carries series identity. */
-function ChartTooltip({ active, payload, label }: { active?: boolean; payload?: TooltipEntry[]; label?: string | number }) {
+function ChartTooltip({
+  active,
+  payload,
+  label,
+}: {
+  active?: boolean;
+  payload?: TooltipEntry[];
+  label?: string | number;
+}) {
   if (!active || !payload?.length) return null;
   return (
     <div className={styles.tooltip}>
@@ -146,14 +274,26 @@ function ChartTooltip({ active, payload, label }: { active?: boolean; payload?: 
         <div key={String(p.name)} className={styles.tooltipRow}>
           <span className={styles.swatch} style={{ background: p.color }} aria-hidden="true" />
           <span>{p.name}</span>
-          <span className={styles.tooltipValue}>{typeof p.value === "number" ? p.value.toLocaleString() : (p.value ?? "n/a")}</span>
+          <span className={styles.tooltipValue}>
+            {typeof p.value === "number" ? p.value.toLocaleString() : (p.value ?? "n/a")}
+          </span>
         </div>
       ))}
     </div>
   );
 }
 
-function DataTable({ chart, rows, seriesNames, open }: { chart: VizChart; rows: Row[]; seriesNames: string[]; open: boolean }) {
+function DataTable({
+  chart,
+  rows,
+  seriesNames,
+  open,
+}: {
+  chart: VizChart;
+  rows: Row[];
+  seriesNames: string[];
+  open: boolean;
+}) {
   const table = (
     <div className={styles.tableWrap}>
       <table className={styles.table}>
@@ -173,7 +313,9 @@ function DataTable({ chart, rows, seriesNames, open }: { chart: VizChart; rows: 
             <tr key={r.x}>
               <th scope="row">{r.x}</th>
               {seriesNames.map((n) => (
-                <td key={n}>{r[n] === null || r[n] === undefined ? "n/a" : Number(r[n]).toLocaleString()}</td>
+                <td key={n}>
+                  {r[n] === null || r[n] === undefined ? "n/a" : Number(r[n]).toLocaleString()}
+                </td>
               ))}
             </tr>
           ))}
