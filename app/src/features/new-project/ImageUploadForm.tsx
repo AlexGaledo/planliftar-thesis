@@ -17,6 +17,7 @@ import { useNavigate } from "react-router-dom";
 import { z } from "zod";
 import { ACCEPTED_IMAGE_TYPES, checkImageFile, usePlanApi } from "@/lib/api";
 import { savePendingUpload } from "@/lib/db/pendingUploads";
+import { UseDemoButton } from "./ServerStatus";
 import styles from "./newProject.module.css";
 
 const schema = z.object({
@@ -39,16 +40,24 @@ export function ImageUploadForm() {
 
   // Object URL for the preview; revoked when the file changes to free memory.
   const previewUrl = useMemo(() => (file ? URL.createObjectURL(file) : null), [file]);
-  useEffect(() => () => {
-    if (previewUrl) URL.revokeObjectURL(previewUrl);
-  }, [previewUrl]);
+  useEffect(
+    () => () => {
+      if (previewUrl) URL.revokeObjectURL(previewUrl);
+    },
+    [previewUrl],
+  );
 
   const upload = useMutation({
     mutationFn: async (values: FormValues) => {
       if (!file) throw new Error("Choose an image first.");
       const { id } = await api.createJob(file, { use_cubicasa: values.useCubicasa });
       const name = values.name || file.name.replace(/\.[^.]+$/, "") || "New plan";
-      await savePendingUpload(id, { name, image: file, fileName: file.name, demo: api.kind === "demo" });
+      await savePendingUpload(id, {
+        name,
+        image: file,
+        fileName: file.name,
+        demo: api.kind === "demo",
+      });
       return id;
     },
     onSuccess: (id) => navigate(`/new/job/${encodeURIComponent(id)}`),
@@ -70,7 +79,9 @@ export function ImageUploadForm() {
         {previewUrl ? (
           <img src={previewUrl} alt={`Preview of ${file?.name}`} className={styles.preview} />
         ) : (
-          <p className="muted">PNG, JPEG or WebP, up to 15 MB. A straight-on photo or scan works best.</p>
+          <p className="muted">
+            PNG, JPEG or WebP, up to 15 MB. A straight-on photo or scan works best.
+          </p>
         )}
         <div className="row">
           <label className="btn" htmlFor="image-input">
@@ -82,8 +93,27 @@ export function ImageUploadForm() {
             </label>
           )}
         </div>
-        <input id="image-input" className="visually-hidden" type="file" accept={accept} onChange={(e) => { pick(e.target.files?.[0]); e.target.value = ""; }} />
-        <input id="camera-input" className="visually-hidden" type="file" accept="image/*" capture="environment" onChange={(e) => { pick(e.target.files?.[0]); e.target.value = ""; }} />
+        <input
+          id="image-input"
+          className="visually-hidden"
+          type="file"
+          accept={accept}
+          onChange={(e) => {
+            pick(e.target.files?.[0]);
+            e.target.value = "";
+          }}
+        />
+        <input
+          id="camera-input"
+          className="visually-hidden"
+          type="file"
+          accept="image/*"
+          capture="environment"
+          onChange={(e) => {
+            pick(e.target.files?.[0]);
+            e.target.value = "";
+          }}
+        />
       </div>
       {fileError && (
         <p className="notice notice-error" role="alert">
@@ -93,8 +123,16 @@ export function ImageUploadForm() {
 
       <div className="field">
         <label htmlFor="project-name">Project name</label>
-        <input id="project-name" className="input" placeholder="e.g. Santos residence, ground floor" {...register("name")} aria-invalid={!!formState.errors.name} />
-        {formState.errors.name && <span className="field-error">{formState.errors.name.message}</span>}
+        <input
+          id="project-name"
+          className="input"
+          placeholder="e.g. Santos residence, ground floor"
+          {...register("name")}
+          aria-invalid={!!formState.errors.name}
+        />
+        {formState.errors.name && (
+          <span className="field-error">{formState.errors.name.message}</span>
+        )}
       </div>
 
       <label className="check">
@@ -108,9 +146,14 @@ export function ImageUploadForm() {
       </label>
 
       {upload.isError && (
-        <p className="notice notice-error" role="alert">
-          {(upload.error as Error).message}
-        </p>
+        <div className="notice notice-error" role="alert">
+          <span>{(upload.error as Error).message}</span>
+          {api.kind !== "demo" && (
+            <span className="row">
+              <UseDemoButton />
+            </span>
+          )}
+        </div>
       )}
       <div className="row">
         <button className="btn btn-primary" type="submit" disabled={!file || upload.isPending}>

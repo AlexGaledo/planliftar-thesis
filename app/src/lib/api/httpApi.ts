@@ -21,20 +21,46 @@ const REQUEST_TIMEOUT_MS = 20_000;
 /** Uploads of 15 MB over hotel Wi-Fi need longer. */
 const UPLOAD_TIMEOUT_MS = 120_000;
 
-async function readError(res: Response): Promise<string> {
+/**
+ * A plain-language message for a failed response. The server's own `error` /
+ * `detail` text wins (it is written for users); otherwise the status code is
+ * explained, never shown bare ("HTTP 500" means nothing to a client).
+ */
+async function readError(res: Response, where: string): Promise<string> {
   try {
     const body = (await res.json()) as { error?: string; detail?: string };
-    return body.error || body.detail || `HTTP ${res.status}`;
+    if (body.error || body.detail) return (body.error || body.detail) as string;
   } catch {
-    return `HTTP ${res.status}`;
+    // Not JSON: fall through to the status explanation.
+  }
+  if (res.status >= 500)
+    return `The analysis server at ${where} is not responding (error ${res.status}). Check it is running, or turn on Demo mode.`;
+  if (res.status === 404 || res.status === 405)
+    return `There is no analysis server at ${where}. Check the address in Settings, or turn on Demo mode.`;
+  return `The analysis server at ${where} refused the request (error ${res.status}).`;
+}
+
+/** Parse a JSON body; an HTML page here means the address is a website, not our API. */
+async function readJson<T>(res: Response, where: string): Promise<T> {
+  try {
+    return (await res.json()) as T;
+  } catch {
+    throw new ApiError(
+      `There is no analysis server at ${where}. Check the address in Settings, or turn on Demo mode.`,
+      res.status,
+    );
   }
 }
 
 export function createHttpApi(serverUrl: string): PlanApi {
   const base = apiBase(serverUrl);
-  const where = serverUrl || "this site's /api";
+  const where = serverUrl || "this site";
 
-  async function request(path: string, init: RequestInit = {}, timeoutMs = REQUEST_TIMEOUT_MS): Promise<Response> {
+  async function request(
+    path: string,
+    init: RequestInit = {},
+    timeoutMs = REQUEST_TIMEOUT_MS,
+  ): Promise<Response> {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
@@ -56,8 +82,8 @@ export function createHttpApi(serverUrl: string): PlanApi {
 
     async health() {
       const res = await request("/health");
-      if (!res.ok) throw new ApiError(await readError(res), res.status);
-      return (await res.json()) as Health;
+      if (!res.ok) throw new ApiError(await readError(res, where), res.status);
+      return readJson<Health>(res, where);
     },
 
     async createJob(image: File, options?: JobOptions) {
@@ -65,10 +91,13 @@ export function createHttpApi(serverUrl: string): PlanApi {
       form.append("image", image, image.name);
       if (options) form.append("options", JSON.stringify(options));
       const res = await request("/jobs", { method: "POST", body: form }, UPLOAD_TIMEOUT_MS);
-      if (res.status === 413) throw new ApiError("That image is too large for the server (15 MB limit).", 413);
-      if (res.status === 415) throw new ApiError("The server only accepts PNG, JPEG or WebP images.", 415);
-      if (res.status !== 202 && !res.ok) throw new ApiError(await readError(res), res.status);
-      const body = (await res.json()) as { id?: string; job_id?: string };
+      if (res.status === 413)
+        throw new ApiError("That image is too large for the server (15 MB limit).", 413);
+      if (res.status === 415)
+        throw new ApiError("The server only accepts PNG, JPEG or WebP images.", 415);
+      if (res.status !== 202 && !res.ok)
+        throw new ApiError(await readError(res, where), res.status);
+      const body = await readJson<{ id?: string; job_id?: string }>(res, where);
       const id = body.id ?? body.job_id;
       if (!id) throw new ApiError("The server accepted the upload but returned no job id.");
       return { id };
@@ -76,9 +105,10 @@ export function createHttpApi(serverUrl: string): PlanApi {
 
     async getJob(id: string) {
       const res = await request(`/jobs/${encodeURIComponent(id)}`);
-      if (res.status === 404) throw new ApiError("This analysis is no longer on the server. Upload the plan again.", 404);
-      if (!res.ok) throw new ApiError(await readError(res), res.status);
-      return (await res.json()) as Job;
+      if (res.status === 404)
+        throw new ApiError("This analysis is no longer on the server. Upload the plan again.", 404);
+      if (!res.ok) throw new ApiError(await readError(res, where), res.status);
+      return readJson<Job>(res, where);
     },
 
     overlayUrl(id: string) {

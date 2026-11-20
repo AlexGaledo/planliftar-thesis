@@ -78,7 +78,7 @@ export function JobProgressPage() {
       <header className="page-header">
         <div>
           <h1>Reading your plan</h1>
-          <p className="muted">This usually takes under a minute on a GPU. You can leave this page open on its own.</p>
+          <p className="muted">This usually takes under a minute. Keep this page open; the plan is saved to your projects when it is done.</p>
         </div>
       </header>
 

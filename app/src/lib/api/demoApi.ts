@@ -16,8 +16,8 @@ import type { Health, Job, PlanApi } from "./types";
 export const DEMO_STAGES = [
   "Queued",
   "Preparing the image",
-  "Finding walls (MitUNet)",
-  "Second opinion on rooms (CubiCasa)",
+  "Finding the walls",
+  "Checking the rooms with a second AI model",
   "Tracing rooms and walls",
   "Checking the two models agree",
   "Closing small wall gaps",

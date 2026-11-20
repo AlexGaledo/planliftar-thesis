@@ -8,17 +8,31 @@ import { Link } from "react-router-dom";
 import { usePlanApi } from "@/lib/api";
 import { useSettings } from "@/stores/settings";
 
+/** One tap from "no server" to a working demo, without a trip to Settings. */
+export function UseDemoButton() {
+  const update = useSettings((s) => s.update);
+  return (
+    <button type="button" className="btn" onClick={() => update({ demoMode: true })}>
+      Use demo mode instead
+    </button>
+  );
+}
+
 export function ServerStatus() {
   const api = usePlanApi();
   const serverUrl = useSettings((s) => s.serverUrl);
-  const health = useQuery({ queryKey: ["health", api.kind, serverUrl], queryFn: () => api.health(), retry: 0 });
+  const health = useQuery({
+    queryKey: ["health", api.kind, serverUrl],
+    queryFn: () => api.health(),
+    retry: 0,
+  });
 
   if (api.kind === "demo") {
     return (
       <p className="notice notice-warn small">
         <span>
-          <strong>Demo mode is on.</strong> Uploads are not analysed; you get a sample plan after a short simulated run.{" "}
-          <Link to="/settings">Change in Settings</Link>
+          <strong>Demo mode is on.</strong> Uploads are not analysed; you get a sample plan after a
+          short simulated run. <Link to="/settings">Change in Settings</Link>
         </span>
       </p>
     );
@@ -36,7 +50,12 @@ export function ServerStatus() {
         <strong>The analysis server is not reachable.</strong>
         <span>{(health.error as Error).message}</span>
         <span>
-          You can still import a plan file or open an example. <Link to="/settings">Server settings</Link>
+          Demo mode returns a sample plan so you can try every step. You can also import a plan file
+          or add an example below.
+        </span>
+        <span className="row">
+          <UseDemoButton />
+          <Link to="/settings">Server settings</Link>
         </span>
       </div>
     );
@@ -48,8 +67,10 @@ export function ServerStatus() {
   return (
     <p className={`notice small ${missing.length ? "notice-warn" : "notice-live"}`} role="status">
       <span>
-        <span className="dot dot-live" aria-hidden="true" /> Analysis server ready on {h.device === "cuda" ? "GPU" : "CPU"}
-        {h.device === "cpu" && " (slower)"}.{missing.length > 0 && ` Missing model: ${missing.join(", ")}.`}
+        <span className="dot dot-live" aria-hidden="true" /> Analysis server ready on{" "}
+        {h.device === "cuda" ? "GPU" : "CPU"}
+        {h.device === "cpu" && " (slower)"}.
+        {missing.length > 0 && ` Missing model: ${missing.join(", ")}.`}
       </span>
     </p>
   );

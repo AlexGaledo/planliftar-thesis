@@ -109,4 +109,14 @@ describe("HTTP API", () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response("{}", { status: 404 })));
     await expect(api.getJob("x")).rejects.toThrow(/no longer on the server/);
   });
+
+  it("never shows a bare status code", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("proxy error", { status: 500 })));
+    await expect(createHttpApi("").health()).rejects.toThrow(/not responding \(error 500\).*Demo mode/);
+  });
+
+  it("explains an HTML page where the API should be", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("<!doctype html>", { status: 200 })));
+    await expect(createHttpApi("").health()).rejects.toThrow(/no analysis server at this site/);
+  });
 });
