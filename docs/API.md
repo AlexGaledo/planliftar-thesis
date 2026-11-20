@@ -118,5 +118,28 @@ stays reachable from the app's Settings ("Legacy hub, port 8765").
 - First message tags the connection: `{"role":"phone"}` or `{"role":"viewer"}`.
 - Phone to viewers: poses `{"x","y","yaw_deg"}` (no `type`), `{"type":"state",...}`,
   `{"type":"diag",...}`.
+- Phone to viewers: `{"type":"plan","plan_id","name","plan",...}`, the plan the phone
+  has open (at most 2 MB). The hub caches the latest one and replays it to every
+  viewer that joins later, so the laptop's `/map` can follow a plan it does not
+  have in its own library. Too large: the phone gets `{"type":"plan_rejected"}`.
 - Viewers to phones: `{"type":"control","patch":{...}}`, `{"type":"hello"}`.
 - Unknown `type` values are ignored.
+
+## `POST /api/models`
+
+Hosts a GLB for a short time so Android Scene Viewer (a separate app that fetches
+the model itself and cannot read the page's `blob:` URLs) can open it.
+
+- Body: the `.glb` file itself, `Content-Type: model/gltf-binary` (or
+  `application/octet-stream`). At most 15 MB.
+- Validated by content: binary glTF magic `glTF`, version 2, the header length
+  must equal the body length, and the first chunk must be JSON.
+- `201 {"id": "<random>", "url": "https://<host>/api/models/<id>.glb", "expires_in_s": 900}`
+- `400` empty or malformed GLB, `413` too large, `415` not a GLB / wrong content type.
+
+Models live in memory for 15 minutes (at most 16 models and 64 MB in total, oldest
+evicted first). Ids are 128-bit random.
+
+## `GET /api/models/{id}.glb`
+
+The uploaded bytes, `Content-Type: model/gltf-binary`. `404` once expired.

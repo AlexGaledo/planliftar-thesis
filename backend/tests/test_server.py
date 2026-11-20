@@ -297,10 +297,10 @@ def test_ws_hub_fan_out(client):
         viewer.send_text(json.dumps({"role": "viewer"}))
         hub = client.app.state.hub
         for _ in range(100):
-            if hub.counts() == {"phones": 2, "viewers": 1}:
+            if hub.counts()["phones"] == 2 and hub.counts()["viewers"] == 1:
                 break
             time.sleep(0.01)
-        assert hub.counts() == {"phones": 2, "viewers": 1}
+        assert hub.counts() == {"phones": 2, "viewers": 1, "shared_plan": False}
 
         # phone -> viewers, verbatim (byte-identical text, incl. spacing)
         pose = '{"x": 1420.5, "y": 980.2,  "yaw_deg": 37.4}'
@@ -334,6 +334,100 @@ def test_ws_untagged_messages_are_ignored(client):
         anon.send_text('{"role":"phone"}')
         anon.send_text('{"x":3,"y":4,"yaw_deg":0}')
         assert viewer.receive_text() == '{"x":3,"y":4,"yaw_deg":0}'
+
+
+def _wait_counts(client, **want):
+    hub = client.app.state.hub
+    for _ in range(200):
+        c = hub.counts()
+        if all(c[k] == v for k, v in want.items()):
+            return c
+        time.sleep(0.01)
+    raise AssertionError(f"hub counts {hub.counts()} != {want}")
+
+
+def test_ws_plan_is_cached_and_replayed_to_late_viewers(client):
+    plan_msg = json.dumps({"type": "plan", "plan_id": "p1", "name": "Flat",
+                           "plan": {"walls": [], "rooms": []}, "ppm": 50})
+    with client.websocket_connect("/ws") as phone, client.websocket_connect("/ws") as early:
+        phone.send_text('{"role":"phone"}')
+        early.send_text('{"role":"viewer"}')
+        _wait_counts(client, phones=1, viewers=1)
+        phone.send_text('{"type":"plan","plan":"not an object"}')   # malformed: dropped
+        phone.send_text(plan_msg)
+        assert early.receive_text() == plan_msg                      # live fan-out
+        _wait_counts(client, shared_plan=True)
+    with client.websocket_connect("/ws") as late:                    # phone has gone
+        late.send_text('{"role":"viewer"}')
+        assert late.receive_text() == plan_msg                       # replayed
+
+
+def test_ws_plan_from_viewer_is_not_cached_and_big_plans_rejected(client):
+    from server.hub import PLAN_MAX_BYTES
+    with client.websocket_connect("/ws") as phone, client.websocket_connect("/ws") as viewer:
+        phone.send_text('{"role":"phone"}')
+        viewer.send_text('{"role":"viewer"}')
+        _wait_counts(client, phones=1, viewers=1)
+        viewer.send_text('{"type":"plan","plan":{}}')
+        assert phone.receive_text() == '{"type":"plan","plan":{}}'   # forwarded, as any viewer msg
+        assert client.app.state.hub.shared_plan is None
+        huge = json.dumps({"type": "plan", "plan": {"pad": "x" * PLAN_MAX_BYTES}})
+        phone.send_text(huge)
+        assert json.loads(phone.receive_text())["type"] == "plan_rejected"
+        phone.send_text('{"x":1,"y":2,"yaw_deg":0}')
+        assert viewer.receive_text() == '{"x":1,"y":2,"yaw_deg":0}'   # huge one never arrived
+        assert client.app.state.hub.shared_plan is None
+
+
+# ------------------------------------------------------------- /api/models
+def glb_bytes(extra=b"") -> bytes:
+    import struct
+    js = b'{"asset":{"version":"2.0"}}'
+    js += b" " * (-len(js) % 4)
+    body = struct.pack("<II", len(js), 0x4E4F534A) + js + extra
+    return b"glTF" + struct.pack("<II", 2, 12 + len(body)) + body
+
+
+def test_model_upload_and_fetch(client):
+    data = glb_bytes()
+    r = client.post("/api/models", content=data, headers={"Content-Type": "model/gltf-binary"})
+    assert r.status_code == 201, r.text
+    body = r.json()
+    assert body["url"].startswith("http://testserver/api/models/") and body["url"].endswith(".glb")
+    assert len(body["id"]) >= 20 and body["expires_in_s"] > 0
+    g = client.get(body["url"].replace("http://testserver", ""))
+    assert g.status_code == 200 and g.content == data
+    assert g.headers["content-type"] == "model/gltf-binary"
+    assert client.get("/api/models/nope.glb").status_code == 404
+
+
+def test_model_upload_validation(client):
+    post = lambda d, ct="model/gltf-binary": client.post(  # noqa: E731
+        "/api/models", content=d, headers={"Content-Type": ct})
+    assert post(b"").status_code == 400
+    assert post(b"PK\x03\x04" + b"\x00" * 40).status_code == 415          # a zip, not a glb
+    assert post(png_bytes()).status_code == 415
+    bad_len = bytearray(glb_bytes()); bad_len[8] ^= 0xFF
+    assert post(bytes(bad_len)).status_code == 400
+    v1 = bytearray(glb_bytes()); v1[4] = 1
+    assert post(bytes(v1)).status_code == 415
+    assert post(glb_bytes(), "text/html").status_code == 415
+
+
+def test_model_upload_size_cap(tmp_path):
+    with TestClient(create_app(demo_settings(tmp_path, max_upload_bytes=1024))) as c:
+        r = c.post("/api/models", content=glb_bytes(b"\x00" * 4096),
+                   headers={"Content-Type": "model/gltf-binary"})
+        assert r.status_code == 413
+
+
+def test_model_store_ttl_and_eviction():
+    from server.models import ModelStore
+    store = ModelStore(ttl_s=0.05, max_count=2)
+    a, b, c = (store.put(bytes([i]) * 10) for i in range(3))
+    assert store.get(a) is None and store.get(b) and store.get(c)     # oldest evicted
+    time.sleep(0.08)
+    assert store.get(b) is None                                       # expired
 
 
 def test_ws_rejects_foreign_origin(client):

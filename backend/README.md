@@ -139,7 +139,8 @@ server/
   runners.py   EngineRunner (background model loading) and DemoRunner
   uploads.py   upload and options validation
   overlay.py   debug overlay renderer
-  hub.py       /ws hub (ported from deliverables/livemap/server.py)
+  hub.py       /ws hub (ported from deliverables/livemap/server.py), caches the shared plan
+  models.py    short-lived GLB hosting for Scene Viewer (/api/models)
   cors.py      Host allowlist, Origin/CSRF check, CORS, body size cap
   static.py    app/dist serving, SPA fallback, cache headers
   tls.py       LAN IP discovery, local CA + leaf (ported from server.py)

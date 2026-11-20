@@ -15,6 +15,7 @@ from .config import Settings
 from .cors import CorsAndLimitsMiddleware, HostPolicy, OriginPolicy
 from .hub import Hub
 from .jobs import JobManager, QueueFull
+from .models import MODEL_TTL_S, ModelRejected, ModelStore, validate_glb
 from .runners import DemoRunner, EngineRunner
 from .static import serve_spa
 from .tls import CertPaths, ca_der, get_lan_ips
@@ -41,6 +42,7 @@ def create_app(settings: Settings | None = None, runner=None) -> FastAPI:
     runner = runner or (DemoRunner(settings) if settings.demo else EngineRunner(settings))
     jobs = JobManager(settings, runner)
     hub = Hub()
+    models = ModelStore()
     policy = OriginPolicy(settings.allowed_origins, settings.allow_private_lan_origins)
     lan_ips = settings.lan_ips if settings.lan_ips is not None else tuple(get_lan_ips())
     hosts = HostPolicy(lan_ips, settings.listen_ports, settings.allowed_hosts)
@@ -56,6 +58,7 @@ def create_app(settings: Settings | None = None, runner=None) -> FastAPI:
     app = FastAPI(title="PlanLiftAR server", lifespan=lifespan, docs_url=None,
                   redoc_url=None, openapi_url=None)
     app.state.settings, app.state.jobs, app.state.hub, app.state.runner = settings, jobs, hub, runner
+    app.state.models = models
     app.add_middleware(CorsAndLimitsMiddleware, policy=policy, hosts=hosts,
                        max_body=settings.max_upload_bytes)
 
@@ -75,7 +78,7 @@ def create_app(settings: Settings | None = None, runner=None) -> FastAPI:
                 "models": st["models"],
                 # extras (not in the contract; clients ignore them)
                 "loading": st["loading"], "demo": settings.demo, "queue": jobs.counts(),
-                "hub": hub.counts()}
+                "hub": hub.counts(), "hosted_models": models.counts()["models"]}
         if st["error"]:
             body["error"] = st["error"]
         return JSONResponse(body, headers={"Cache-Control": "no-store"})
@@ -133,6 +136,39 @@ def create_app(settings: Settings | None = None, runner=None) -> FastAPI:
             return err(404, "no overlay for this job")
         return Response(job.overlay_png, media_type="image/png",
                         headers={"Cache-Control": "private, max-age=3600"})
+
+    @app.post("/api/models")
+    async def upload_model(request: Request):
+        """GLB for Android Scene Viewer, which needs an http(s) URL (docs/API.md)."""
+        ctype = request.headers.get("content-type", "").split(";")[0].strip().lower()
+        if ctype not in ("", "model/gltf-binary", "application/octet-stream"):
+            return err(415, "send the .glb as the body with Content-Type: model/gltf-binary")
+        try:
+            data = await request.body()
+        except ClientDisconnect:
+            if request.scope.get("state", {}).get("body_too_large"):
+                return err(413, f"model is larger than {settings.max_upload_bytes // 2**20} MB")
+            return err(400, "upload interrupted")
+        try:
+            validate_glb(data, settings.max_upload_bytes)
+        except ModelRejected as e:
+            return err(e.status, e.message)
+        model_id = models.put(data)
+        path = f"/api/models/{model_id}.glb"
+        url = str(request.base_url).rstrip("/") + path
+        return JSONResponse({"id": model_id, "url": url, "expires_in_s": MODEL_TTL_S},
+                            status_code=201,
+                            headers={"Location": path, "Cache-Control": "no-store"})
+
+    @app.get("/api/models/{name}")
+    async def get_model(name: str):
+        model_id = name[:-4] if name.endswith(".glb") else name
+        data = models.get(model_id)
+        if data is None:
+            return err(404, "unknown or expired model")
+        return Response(data, media_type="model/gltf-binary",
+                        headers={"Cache-Control": f"private, max-age={MODEL_TTL_S}",
+                                 "Content-Disposition": 'inline; filename="planliftar.glb"'})
 
     @app.api_route("/api/{rest:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH"])
     async def api_not_found(rest: str):

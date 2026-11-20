@@ -14,6 +14,13 @@ unchanged and deliberately dumb:
   Unknown `type` values therefore pass through untouched, and clients ignore
   what they do not recognise.
 
+One exception to "never parses": a phone's {"type": "plan", ...} message (the
+plan it has open, see PROTOCOL.md) is also CACHED, and replayed to every viewer
+that tags itself later, so a laptop that opens the map after the phone entered
+AR still gets the plan. Plan messages may be up to PLAN_MAX_BYTES (2 MB); a
+larger one is dropped and the phone gets {"type": "plan_rejected", "reason"}.
+Every other message is capped at MAX_MESSAGE_BYTES.
+
 Each client gets its own bounded outbound queue and sender task, so one slow
 or stalled phone/viewer cannot hold up the fan-out to the others (oldest
 messages are dropped for that client when its queue is full; poses are 10 Hz
@@ -28,6 +35,7 @@ from starlette.websockets import WebSocket, WebSocketDisconnect
 
 OUTBOX_SIZE = 256
 MAX_MESSAGE_BYTES = 256 * 1024
+PLAN_MAX_BYTES = 2 * 1024 * 1024
 
 
 class _Client:
@@ -57,9 +65,11 @@ class Hub:
     def __init__(self) -> None:
         self.phones: set[_Client] = set()
         self.viewers: set[_Client] = set()
+        self.shared_plan: str | None = None     # last {"type":"plan"} from a phone, verbatim
 
     def counts(self) -> dict:
-        return {"phones": len(self.phones), "viewers": len(self.viewers)}
+        return {"phones": len(self.phones), "viewers": len(self.viewers),
+                "shared_plan": self.shared_plan is not None}
 
     @staticmethod
     def _fan_out(targets: set[_Client], message: str) -> None:
@@ -86,9 +96,14 @@ class Hub:
                         raw = data.decode("utf-8")
                     except UnicodeDecodeError:
                         continue
-                if len(raw) > MAX_MESSAGE_BYTES:
+                if len(raw) > PLAN_MAX_BYTES:
+                    if role == "phone" and '"plan"' in raw[:4096]:
+                        client.offer(json.dumps({"type": "plan_rejected",
+                                                 "reason": "plan larger than 2 MB"}))
                     continue
                 if role is None:
+                    if len(raw) > MAX_MESSAGE_BYTES:
+                        continue
                     try:
                         data = json.loads(raw)
                     except ValueError:
@@ -105,11 +120,21 @@ class Hub:
                         continue
                     print(f"[ws] {role} connected ({peer}) phones={len(self.phones)} "
                           f"viewers={len(self.viewers)}")
+                    if role == "viewer" and self.shared_plan is not None:
+                        client.offer(self.shared_plan)     # late joiner gets the plan
                     continue          # the role message itself is never forwarded
                 # As in server.py, non-JSON frames are dropped, not forwarded.
                 try:
-                    json.loads(raw)
+                    data = json.loads(raw)
                 except ValueError:
+                    continue
+                is_plan = (role == "phone" and isinstance(data, dict)
+                           and data.get("type") == "plan")
+                if is_plan:
+                    if not isinstance(data.get("plan"), dict):
+                        continue      # malformed: not cached, not forwarded
+                    self.shared_plan = raw
+                elif len(raw) > MAX_MESSAGE_BYTES:
                     continue
                 self._fan_out(self.viewers if role == "phone" else self.phones, raw)
         except WebSocketDisconnect:
