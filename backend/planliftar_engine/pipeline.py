@@ -40,8 +40,9 @@ class PipelineOptions:
                      Resolution matters: 1600/2048/2400/native gave 40/56/63/90
                      CubiCasa walls on the 10052 sample (notebook: 109).
     max_image_side   uploads larger than this (longest side, px) are downscaled
-                     first; output coords are in the DOWNSCALED frame and
-                     source.input_scale records the factor.
+                     for analysis; the result is mapped back, so output coords
+                     are always FULL uploaded-image px. source.input_scale
+                     records the analysis factor (analysis px / full px).
     autocrop         notebook's second pass on the plan's bbox for big sheets.
     close_gaps       run plan_ops.close_wall_gaps on the export.
     export_rejected  include geometry even when the acceptance barrier rejects.
@@ -74,7 +75,7 @@ def _device(pref: str) -> str:
 
 
 def decode_image(image_bytes: bytes, max_side: int):
-    """bytes -> (RGB uint8 HxWx3, scale). Applies EXIF orientation (phone photos)."""
+    """bytes -> (RGB uint8 HxWx3, scale, (W, H) full size). Applies EXIF orientation."""
     from PIL import Image, ImageOps
     if not image_bytes:
         raise InputError("empty upload")
@@ -102,7 +103,7 @@ def decode_image(image_bytes: bytes, max_side: int):
     if max_side and max(w, h) > max_side:
         scale = max_side / max(w, h)
         im = im.resize((round(w * scale), round(h * scale)), Image.LANCZOS)
-    return np.asarray(im), scale
+    return np.asarray(im), scale, (w, h)
 
 
 def _with_cpu_fallback(fn, device, timings, key):
@@ -120,6 +121,53 @@ def _with_cpu_fallback(fn, device, timings, key):
         used = "cpu (cuda OOM fallback)"
     timings[key] = round(time.perf_counter() - t, 3)
     return out, used
+
+
+def _round1(v: float) -> float:
+    return round(float(v), 1)
+
+
+def to_full_frame(plan: dict, scale: float, full_size: tuple[int, int]) -> dict:
+    """Map a plan built on a downscaled analysis image back to full-image px.
+
+    scale      analysis px / full px (decode_image's factor, <= 1)
+    full_size  (W, H) of the uploaded image after EXIF rotation
+    Scales every pixel-valued field: wall endpoints and thickness, room polygons
+    (area_px by scale^-2), fixture positions and widths, and the px metrics in
+    acceptance / gap_fill. In place; returns plan. No-op when scale == 1.
+    """
+    W, H = full_size
+    plan["source"]["image_width_px"] = int(W)
+    plan["source"]["image_height_px"] = int(H)
+    if scale == 1.0:
+        return plan
+    k = 1.0 / scale
+
+    def pt(p):
+        return {**p, "x": _round1(p["x"] * k), "y": _round1(p["y"] * k)}
+    for w in plan.get("walls", []):
+        w["start"], w["end"] = pt(w["start"]), pt(w["end"])
+        if isinstance(w.get("thickness"), (int, float)):
+            w["thickness"] = _round1(w["thickness"] * k)
+    for r in plan.get("rooms", []):
+        r["polygon"] = [pt(p) for p in r.get("polygon", [])]
+        if isinstance(r.get("area_px"), (int, float)):
+            r["area_px"] = int(round(r["area_px"] * k * k))
+    for f in plan.get("fixtures", []):
+        f["position"] = pt(f["position"])
+        sc = f.get("scale")
+        if isinstance(sc, dict) and isinstance(sc.get("width"), (int, float)):
+            sc["width"] = round(sc["width"] * k, 2)      # derived from px width
+    acc = plan.get("acceptance", {})
+    if isinstance(acc.get("wall_thickness_px"), (int, float)):
+        acc["wall_thickness_px"] = _round1(acc["wall_thickness_px"] * k)
+    if isinstance(acc.get("crop_offset"), list):
+        acc["crop_offset"] = [int(round(v * k)) for v in acc["crop_offset"]]
+    gf = plan.get("gap_fill", {})
+    for key in ("t_med", "join"):
+        if isinstance(gf.get(key), (int, float)):
+            gf[key] = _round1(gf[key] * k)
+    return plan
 
 
 ProgressCallback = Callable[[str, float], None]
@@ -167,7 +215,8 @@ def run_pipeline(image_bytes: bytes, options: PipelineOptions | dict | None = No
                         consensus_iou, ..., wall_thickness_px, crop_offset},
          "gap_fill": {...plan_ops report...},
          "engine": {version, device, mode, timings_s: {...}, total_s}}
-        All coordinates are pixels of the (possibly downscaled) input image.
+        All coordinates are pixels of the full uploaded image (after EXIF
+        rotation), even when it was downscaled for analysis (input_scale < 1).
         A rejected plan has empty walls/rooms/fixtures (unless export_rejected).
 
     Timing (2730x2048 CubiCasa sample, RTX 3050 Laptop 4 GB, i.e. this repo's dev box,
@@ -201,7 +250,7 @@ def run_pipeline(image_bytes: bytes, options: PipelineOptions | dict | None = No
         t0 = time.perf_counter()
         timings: dict = {}
         _notify(progress_cb, STAGE_DECODE, 0.02)
-        img, in_scale = decode_image(image_bytes, options.max_image_side)
+        img, in_scale, full_size = decode_image(image_bytes, options.max_image_side)
         timings["decode"] = round(time.perf_counter() - t0, 3)
         Hf, Wf = img.shape[:2]
         device = _device(options.device)
@@ -274,6 +323,7 @@ def run_pipeline(image_bytes: bytes, options: PipelineOptions | dict | None = No
             raise EngineError(f"geometry failed: {e}") from e
         timings["geometry"] = round(time.perf_counter() - t, 3)
 
+        to_full_frame(plan, in_scale, full_size)
         plan["source"]["input_scale"] = round(in_scale, 6)
         if cubi_error:
             plan["acceptance"]["notes"].append("cubicasa_failed")

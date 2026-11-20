@@ -90,7 +90,7 @@ the repo uses and normalises them (`app/src/lib/plan/normalize.ts`):
 ```jsonc
 {
   "schema_version": "2.0",
-  "source": { "image_width_px": 2730, "image_height_px": 2048 },
+  "source": { "image_width_px": 2730, "image_height_px": 2048, "input_scale": 1 },
   "scale": { "units": "relative_px", "user_scale_required": true },
   "walls": [ { "id": "w0", "start": {"x": 114, "y": 380}, "end": {"x": 105, "y": 385},
                "thickness": 29.6, "exterior": true, "between": [1, 2] } ],
@@ -101,8 +101,13 @@ the repo uses and normalises them (`app/src/lib/plan/normalize.ts`):
 }
 ```
 
-Coordinates are pixels of the **full uploaded image** (crop offset already applied),
-so the app can draw them straight over the source image.
+Coordinates are pixels of the **full uploaded image** (after EXIF rotation, crop
+offset already applied), so the app can draw them straight over the source image.
+This holds for large uploads too: an image whose longest side exceeds 4096 px is
+analysed on a downscaled copy, and the server maps walls, thickness, rooms
+(`area_px` too), fixtures and the px metrics in `acceptance` back to the full
+image before answering. `source.input_scale` (analysis px / full px, `1` when not
+downscaled) is informational only; clients must not apply it.
 
 ## WebSocket hub: `/ws`
 
