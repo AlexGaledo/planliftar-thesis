@@ -1,0 +1,152 @@
+/* AR is drawn over a live camera image, so the overlay uses fixed paper/ink
+   panels (not theme tokens) to stay readable over anything the camera sees. */
+.root {
+  position: fixed;
+  inset: 0;
+  background: #000;
+  color: #000;
+}
+.scene {
+  position: absolute;
+  inset: 0;
+}
+.overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: calc(var(--space-3) + var(--safe-t)) var(--space-3) calc(var(--space-3) + var(--safe-b));
+  pointer-events: none;
+  /* the light theme tokens, forced for the white panels */
+  --paper: #fff;
+  --ink: #000;
+  --graphite: #545454;
+  --rule: #d6d6d6;
+  --wash: #f2f2f2;
+  --live: #13804b;
+  --warn: #a15c00;
+}
+.overlay > * {
+  pointer-events: auto;
+}
+
+.top {
+  display: grid;
+  gap: var(--space-2);
+}
+.topRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  align-items: center;
+}
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 40px;
+  padding: 0 var(--space-3);
+  background: #fff;
+  color: #000;
+  border: var(--stroke) solid #000;
+  border-radius: 999px;
+  font-size: var(--step--1);
+  font-weight: 600;
+}
+.chip:last-child {
+  margin-left: auto;
+}
+.hint {
+  margin: 0;
+  background: #fff;
+  color: #000;
+  border: var(--stroke) solid #000;
+  border-radius: var(--radius-m);
+  padding: var(--space-3) var(--space-4);
+  font-size: var(--step-0);
+  font-weight: 600;
+  max-width: 34rem;
+}
+.overlay[data-stage="placed"] .hint {
+  font-weight: 500;
+}
+.errors {
+  max-width: 34rem;
+  white-space: pre-wrap;
+}
+
+.sheet {
+  background: #fff;
+  color: #000;
+  border: var(--stroke) solid #000;
+  border-radius: var(--radius-m);
+  padding: var(--space-4);
+  display: grid;
+  gap: var(--space-3);
+  max-height: 60dvh;
+  overflow-y: auto;
+  width: 100%;
+  max-width: 30rem;
+  margin: 0 auto;
+}
+.title {
+  font-size: var(--step-2);
+}
+.status {
+  margin: 0;
+  font-weight: 700;
+}
+.inline {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+}
+.inline > :global(.btn) {
+  flex: 1;
+}
+.inlineLabel {
+  font-weight: 600;
+  white-space: nowrap;
+}
+.more summary {
+  cursor: pointer;
+  font-weight: 600;
+  min-height: var(--touch);
+  display: flex;
+  align-items: center;
+}
+.debug {
+  margin: 0;
+  font-size: 11px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: var(--wash);
+  padding: var(--space-2);
+  border-radius: var(--radius-s);
+}
+
+/* Before the session starts the camera is not shown: center the sheet on paper. */
+.overlay[data-stage="loading"],
+.overlay[data-stage="ready"],
+.overlay[data-stage="fake"] {
+  background: #fff;
+}
+
+.fallback {
+  min-height: 100dvh;
+}
+.modelViewer {
+  display: block;
+  width: 100%;
+  height: min(60dvh, 520px);
+  border: var(--stroke) solid var(--ink);
+  border-radius: var(--radius-s);
+  background: #f4f4f4;
+  --poster-color: transparent;
+}
+.arButton {
+  position: absolute;
+  right: var(--space-3);
+  bottom: var(--space-3);
+}

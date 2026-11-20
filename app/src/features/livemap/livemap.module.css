@@ -1,0 +1,114 @@
+.page {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  height: calc(100dvh - var(--tabbar-h) - var(--safe-b));
+}
+@media (min-width: 900px) {
+  .page {
+    height: 100dvh;
+    grid-template-rows: none;
+    grid-template-columns: minmax(0, 1fr) 320px;
+  }
+}
+
+.mapArea {
+  position: relative;
+  min-height: 300px;
+}
+.stage {
+  position: absolute;
+  inset: 0;
+  background: var(--paper);
+}
+.canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.hud {
+  position: absolute;
+  z-index: 1;
+  top: var(--space-3);
+  left: var(--space-3);
+  right: var(--space-3);
+  display: flex;
+  justify-content: space-between;
+  pointer-events: none;
+}
+.hud > * {
+  pointer-events: auto;
+  background: var(--paper);
+  border: var(--stroke) solid var(--ink);
+  border-radius: var(--radius-s);
+  padding: var(--space-2) var(--space-3);
+}
+.hud p {
+  margin: 0;
+}
+.status {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-weight: 700;
+}
+
+.waiting {
+  position: absolute;
+  z-index: 1;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: min(420px, calc(100% - 2 * var(--space-4)));
+  background: var(--paper);
+  border: var(--stroke) solid var(--ink);
+  border-radius: var(--radius-m);
+  padding: var(--space-5);
+  display: grid;
+  gap: var(--space-2);
+}
+.waiting ol {
+  margin: 0;
+  padding-left: 1.25em;
+}
+.waiting code {
+  overflow-wrap: anywhere;
+}
+
+.side {
+  border-top: var(--stroke) solid var(--ink);
+  padding: var(--space-4);
+  display: grid;
+  align-content: start;
+  gap: var(--space-4);
+  overflow-y: auto;
+  max-height: 45dvh;
+}
+@media (min-width: 900px) {
+  .side {
+    border-top: 0;
+    border-left: var(--stroke) solid var(--ink);
+    max-height: none;
+  }
+}
+
+.panel {
+  display: grid;
+  gap: var(--space-3);
+}
+.panel p {
+  margin: 0;
+}
+.panelTitle {
+  font-size: var(--step-1);
+}
+.more summary {
+  cursor: pointer;
+  font-weight: 600;
+  min-height: var(--touch);
+  display: flex;
+  align-items: center;
+}
+.more[open] summary {
+  margin-bottom: var(--space-2);
+}
