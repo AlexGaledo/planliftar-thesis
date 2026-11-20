@@ -21,7 +21,7 @@ const CHROME = process.env.CHROME_PATH ?? "C:/Program Files/Google/Chrome/Applic
 
 const VIEWPORTS = [
   { name: "phone", width: 390, height: 844, isMobile: true, hasTouch: true, deviceScaleFactor: 2 },
-  { name: "desktop", width: 1280, height: 800, isMobile: false, hasTouch: false, deviceScaleFactor: 1 },
+  { name: "desktop", width: 1440, height: 900, isMobile: false, hasTouch: false, deviceScaleFactor: 1 },
 ];
 
 /** Console noise that is expected in a headless run, not an app bug. */
@@ -58,14 +58,14 @@ try {
     await shot("projects", "/", 1500);
     const href = await page.locator('a[href^="/projects/"]').first().getAttribute("href");
     const projectPath = href ?? "/";
-    await shot("new", "/new");
-    await shot("plan", projectPath, 1200);
+    await shot("new", "/new", 800, true);
+    await shot("plan", projectPath, 1200, true);
     await shot("viewer-3d", `${projectPath}/3d`, 2500);
     await shot("live-map", `${projectPath}/map`, 1200);
     await shot("ar-fallback", `${projectPath}/ar`, 3000);
     await shot("ar-test-walk", `${projectPath}/ar?fake=1`, 1200);
-    await shot("learn", "/learn", 1500);
-    await shot("settings", "/settings");
+    await shot("learn", "/learn", 1500, true);
+    await shot("settings", "/settings", 800, true);
     await shot("not-found", "/nope");
 
     // Demo upload: pick a sample image, analyse, land on the saved plan.
