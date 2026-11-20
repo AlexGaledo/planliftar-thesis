@@ -50,7 +50,7 @@
   stroke-linecap: square;
 }
 .wallFill {
-  stroke: #444;
+  stroke: #8a8a8a; /* grey, not dashed: gap fills are often shorter than a dash */
 }
 .wallSelected {
   stroke: #13804b;

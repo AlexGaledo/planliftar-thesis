@@ -83,7 +83,7 @@
   padding: var(--space-1);
 }
 .actions :global(.btn) {
-  min-height: 40px;
+  min-height: var(--touch);
   font-weight: 500;
   color: var(--graphite);
 }

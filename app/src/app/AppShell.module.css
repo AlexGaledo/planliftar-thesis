@@ -22,6 +22,15 @@
   position: relative;
 }
 
+.phoneStatus {
+  padding: var(--space-2) var(--space-4);
+  border-bottom: 1px solid var(--rule);
+  background: var(--warn-wash);
+}
+.phoneStatus:empty {
+  display: none;
+}
+
 .nav {
   position: fixed;
   z-index: 20;
@@ -152,6 +161,9 @@
   .nav a.active {
     background: var(--ink);
     color: var(--paper);
+  }
+  .phoneStatus {
+    display: none;
   }
   .status {
     margin-top: auto;

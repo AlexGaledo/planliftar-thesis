@@ -60,13 +60,13 @@ function PlanView({ project, prepared }: { project: Project; prepared: PreparedP
     <div className="page">
       <header className="page-header">
         <div>
-          <p className="small muted">
+          <p className="small muted crumbs">
             <Link to="/">Projects</Link> / {project.name}
           </p>
           <h1>{project.name}</h1>
           <p className="muted">
             {formatFootprint(bounds.widthPx / project.ppm, bounds.heightPx / project.ppm, units)}, {plan.rooms?.length ?? 0} rooms,{" "}
-            {plan.walls.length} walls{filled ? ` (${filled} gap fills)` : ""}
+            {plan.walls.length} walls{filled ? ` (${filled} small gaps closed)` : ""}
           </p>
         </div>
       </header>

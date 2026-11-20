@@ -461,3 +461,11 @@ input[type="range"] {
     font-size: var(--step-4);
   }
 }
+
+/* Breadcrumbs: the only "back" on phone sub-pages, so the links get a 44px
+   tall hit area without changing the line's layout. */
+.crumbs a {
+  display: inline-block;
+  padding-block: 14px;
+  margin-block: -14px;
+}

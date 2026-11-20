@@ -56,7 +56,7 @@ function Viewer({ project, prepared }: { project: Project; prepared: PreparedPla
     <div className={styles.page}>
       <header className={styles.bar}>
         <div>
-          <p className="small muted">
+          <p className="small muted crumbs">
             <Link to={`/projects/${project.id}`}>{project.name}</Link> / 3D
           </p>
           <h1 className={styles.title}>{formatFootprint(bounds.widthPx / project.ppm, bounds.heightPx / project.ppm, units)}</h1>

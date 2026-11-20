@@ -65,6 +65,10 @@ export function AppShell() {
       </nav>
       <main id="main" className={styles.main} aria-busy={navigation.state === "loading"}>
         {navigation.state === "loading" && <div className={styles.routeProgress} role="progressbar" aria-label="Loading page" />}
+        {/* Phones have no rail, so the offline notice gets a strip of its own (empty, and hidden, while online). */}
+        <div className={styles.phoneStatus}>
+          <OfflineBadge />
+        </div>
         <Suspense fallback={null}>
           <Outlet />
         </Suspense>

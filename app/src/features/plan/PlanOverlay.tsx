@@ -118,7 +118,6 @@ export function PlanOverlay({ plan, imageUrl, selectedWallId, onSelectWall }: Pl
                     y2={w.end.y}
                     className={[styles.wall, w.generated ? styles.wallFill : "", selected ? styles.wallSelected : ""].join(" ")}
                     strokeWidth={Math.max(w.thickness ?? 4, longest / 300)}
-                    strokeDasharray={w.generated ? `${longest / (60 * k)} ${longest / (120 * k)}` : undefined}
                   />
                   {onSelectWall && (
                     <line
@@ -150,7 +149,7 @@ export function PlanOverlay({ plan, imageUrl, selectedWallId, onSelectWall }: Pl
         </svg>
       </div>
       <figcaption className="small muted">
-        Solid lines are walls the AI found{plan.walls.some((w) => w.generated) ? "; dashed lines are short gaps the app closed" : ""}.
+        Solid lines are walls the AI found{plan.walls.some((w) => w.generated) ? "; grey lines are short gaps the app closed" : ""}.
         {onSelectWall ? " Tap a wall to use it for scale." : ""}
       </figcaption>
     </figure>

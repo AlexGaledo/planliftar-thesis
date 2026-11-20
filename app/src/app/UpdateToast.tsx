@@ -12,11 +12,14 @@
  * plain http LAN address the browser refuses service workers and this stays
  * silent, exactly like the prototype.
  */
+import { useEffect } from "react";
 import { useRegisterSW } from "virtual:pwa-register/react";
 import styles from "./Toast.module.css";
 
 /** Check for a new version hourly while the app stays open (e.g. a kiosk laptop). */
 const UPDATE_CHECK_MS = 60 * 60 * 1000;
+/** "Ready to work offline" is good news, not a decision: it leaves by itself. */
+const OFFLINE_READY_MS = 5000;
 
 export function UpdateToast() {
   const {
@@ -31,6 +34,12 @@ export function UpdateToast() {
       console.info("[pwa] service worker not registered:", error?.message ?? error);
     },
   });
+
+  useEffect(() => {
+    if (!offlineReady) return;
+    const id = setTimeout(() => setOfflineReady(false), OFFLINE_READY_MS);
+    return () => clearTimeout(id);
+  }, [offlineReady, setOfflineReady]);
 
   if (!needRefresh && !offlineReady) return null;
 
