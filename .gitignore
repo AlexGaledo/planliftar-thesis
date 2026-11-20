@@ -16,3 +16,8 @@ __pycache__/
 local/out/
 local/out_*/
 deliverables/livemap/qa/
+
+# Local inference engine: downloaded weights / third-party source, sample inputs, outputs
+backend/weights/
+backend/samples/
+backend/out/

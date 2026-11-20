@@ -1,0 +1,15 @@
+# planliftar_engine runtime deps (tested on Python 3.13, Windows 11, RTX 3050 4 GB).
+#
+# torch is NOT pinned here on purpose: install the build matching your GPU first, e.g.
+#   pip install torch --index-url https://download.pytorch.org/whl/cu128   (CUDA 12.8)
+#   pip install torch --index-url https://download.pytorch.org/whl/cpu     (CPU only)
+# Tested with torch 2.11.0+cu128.
+torch>=2.4
+segmentation-models-pytorch==0.5.0   # same as the notebooks; pulls timm
+numpy>=1.26
+opencv-python-headless>=4.9
+scikit-image>=0.22
+scipy>=1.11
+pillow>=10.0
+shapely>=2.0                          # CubiCasa post-processing
+gdown>=5.0                            # CubiCasa checkpoint lives on Google Drive
