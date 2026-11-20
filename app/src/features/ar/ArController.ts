@@ -276,7 +276,7 @@ export class ArController {
     try {
       const ok = await navigator.xr.isSessionSupported("immersive-ar");
       if (!ok) {
-        this.setUnsupported("This phone does not support AR in the browser.");
+        this.setUnsupported("This device does not support AR in the browser.");
         return;
       }
     } catch (e) {

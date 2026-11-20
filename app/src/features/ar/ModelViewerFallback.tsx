@@ -30,6 +30,10 @@ interface ModelViewerFallbackProps {
   reason: string | null;
 }
 
+/** A phone or tablet: the OS AR viewer may exist. A laptop has none. */
+const isHandheld =
+  typeof window !== "undefined" && window.matchMedia?.("(pointer: coarse)").matches;
+
 export function ModelViewerFallback({ project, prepared, reason }: ModelViewerFallbackProps) {
   const [src, setSrc] = useState<string | null>(null);
   const [blob, setBlob] = useState<Blob | null>(null);
@@ -42,7 +46,10 @@ export function ModelViewerFallback({ project, prepared, reason }: ModelViewerFa
       try {
         // Register the <model-viewer> element, then build the GLB (real metres).
         await import("@google/model-viewer");
-        const glb = await planToGlb(prepared.plan, { ppm: project.ppm, wallHeightM: project.wallHeightM });
+        const glb = await planToGlb(prepared.plan, {
+          ppm: project.ppm,
+          wallHeightM: project.wallHeightM,
+        });
         if (cancelled) return;
         url = URL.createObjectURL(glb);
         setBlob(glb);
@@ -61,21 +68,33 @@ export function ModelViewerFallback({ project, prepared, reason }: ModelViewerFa
     <div className={`page page-narrow ${styles.fallback}`}>
       <header className="page-header">
         <div>
-          <p className="small muted">
+          <p className="small muted crumbs">
             <Link to={`/projects/${project.id}`}>{project.name}</Link> / AR
           </p>
-          <h1>View in your phone&apos;s AR</h1>
+          <h1>{isHandheld ? "View it in your room" : "AR needs a phone"}</h1>
         </div>
       </header>
 
-      <div className="notice notice-warn">
-        <strong>The live AR walk is not available in this browser.</strong>
-        <span>{reason}</span>
-        <span>
-          You can still place the model life-size with your phone&apos;s own AR viewer. The live map will not follow you in that
-          mode. For the full experience, open this page in Chrome on an Android phone with Google Play Services for AR.
-        </span>
-      </div>
+      {isHandheld ? (
+        <div className="notice notice-warn">
+          <strong>The live AR walk does not run in this browser.</strong>
+          <span>{reason}</span>
+          <span>
+            You can still place the model at full size with your phone&apos;s own AR viewer: tap{" "}
+            <strong>Open in AR</strong> below. The live map cannot follow you in that mode. For the
+            full walk, use Chrome on an Android phone with Google Play Services for AR.
+          </span>
+        </div>
+      ) : (
+        <div className="notice">
+          <strong>Open this project on a phone to walk through it.</strong>
+          <span>
+            The full walk needs Chrome on an Android phone; other phones get a simpler AR view. The
+            phone keeps its own project list, so add the same plan there first. Meanwhile you can
+            turn the model around below.
+          </span>
+        </div>
+      )}
 
       {error && (
         <p className="notice notice-error" role="alert">
@@ -84,7 +103,11 @@ export function ModelViewerFallback({ project, prepared, reason }: ModelViewerFa
       )}
 
       {!src && !error && (
-        <div className="progress progress-indeterminate" role="progressbar" aria-label="Preparing the 3D model">
+        <div
+          className="progress progress-indeterminate"
+          role="progressbar"
+          aria-label="Preparing the 3D model"
+        >
           <span />
         </div>
       )}
@@ -107,16 +130,25 @@ export function ModelViewerFallback({ project, prepared, reason }: ModelViewerFa
         </model-viewer>
       )}
 
-      <p className="small muted">
-        On Android, Scene Viewer opens models from a web address; a model made on this device may not open there. Download it and open
-        it from your files instead if the AR button does nothing.
-      </p>
+      {isHandheld && (
+        <p className="small muted">
+          If Open in AR does nothing on Android, download the model and open it from your files.
+        </p>
+      )}
       <div className="row">
-        <button className="btn" type="button" disabled={!blob} onClick={() => blob && downloadBlob(blob, safeFilename(project.name, "glb"))}>
+        <button
+          className="btn"
+          type="button"
+          disabled={!blob}
+          onClick={() => blob && downloadBlob(blob, safeFilename(project.name, "glb"))}
+        >
           Download model (.glb)
         </button>
-        <Link className="btn btn-quiet" to={`/projects/${project.id}/3d`}>
+        <Link className="btn" to={`/projects/${project.id}/3d`}>
           Open the 3D viewer
+        </Link>
+        <Link className="btn btn-quiet" to={`/projects/${project.id}`}>
+          Back to the plan
         </Link>
       </div>
     </div>
