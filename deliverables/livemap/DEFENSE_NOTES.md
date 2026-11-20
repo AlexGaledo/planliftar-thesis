@@ -87,15 +87,25 @@ only on a green ring. A model placed on a guess sits in a world ARCore has
 not mapped yet, so it follows the camera and then jumps once tracking
 catches up. Plain floors take longer to turn green than a textured table.
 
+The ring turns green only when the surface is good enough to anchor to: a
+real detected plane (not just loose feature points), holding still for
+about half a second, after the phone has moved at least 30 cm since AR
+started so ARCore has seen the room from more than one angle. Until then
+the coach line says which of those is missing.
+
 **3. Anchors (keep it there)**
 
 ARCore keeps refining its map as you move. Its idea of "2 metres from the
 door" can shift a little as it learns the room better. An **anchor** is
 like a sticky note on the table: it is attached to the real spot, not to
 the coordinate, so when the map shifts the note stays on the table. Our
-model is attached to an anchor at the tap point. Small corrections are
-smoothed; large ones (ARCore genuinely changed its mind) are applied at
-once.
+model is attached to an anchor at the tap point, which is also the centre
+of the plan, and every frame the model takes both the anchor's position
+and its heading. Heading matters: at life size the far walls are metres
+from the anchor, and a 2 degree correction ignored there moves a wall 28 cm
+at 8 m. ARCore advises keeping content within about 8 m of its anchor, so
+the Re-anchor button moves the anchor to the floor near you without moving
+the model.
 
 ### How the map knows where you are
 

@@ -14,7 +14,7 @@
  * the server with --tls and install its certificate on the phone (see
  * README.md) or none of this applies.
  */
-const VERSION = "planliftar-v3";
+const VERSION = "planliftar-v4";
 const SHELL = VERSION + "-shell";
 
 // Same-origin app shell. Kept explicit rather than globbed: a typo here is a
@@ -24,6 +24,7 @@ const SHELL_URLS = [
   "./index.html",
   "./ar.html",
   "./plan_ops.js",
+  "./ar_core.js",
   "./manifest.webmanifest",
   "./icons/icon-192.png",
   "./icons/icon-512.png",

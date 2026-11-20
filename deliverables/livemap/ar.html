@@ -61,6 +61,13 @@
     tilt the detected plane had. The user can then yaw it deliberately with
     rotation_deg.
 
+    After placement the group's pose is NOT fixed: it is re-derived every
+    frame from the XRAnchor (position AND yaw, tilt dropped) by
+    AnchoredPlacement in ar_core.js, then the user yaw / ground offset /
+    1:N scale are composed on top in applyPlacementPose(). Following only
+    the anchor's position (as an earlier version did) lets ARCore's yaw
+    corrections swing the far walls of a life-size model.
+
     A rotated group is fine for the inverse below: worldToLocal() inverts
     the group's full world matrix, and the yaw derivation already applies
     the inverse group quaternion to the camera forward vector. An earlier
@@ -565,6 +572,7 @@ if ("serviceWorker" in navigator && window.isSecureContext) {
         <div class="sheet-head">
           <b id="placedStatus">Placed</b>
           <div>
+            <button id="reanchorBtn" type="button" title="Point at the floor near you, then tap: re-locks the model to a spot close to you without moving it">Re-anchor</button>
             <button id="resetBtn" type="button" title="Place the model again">Start over</button>
             <button id="sheetToggle" type="button" aria-label="Collapse">&#8964;</button>
           </div>
@@ -630,6 +638,12 @@ if ("serviceWorker" in navigator && window.isSecureContext) {
 <script type="module">
 import * as THREE from "three";
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
+// World-locking core (anchor follow, tracking + surface gating). Shared with
+// the React port - see the header of ar_core.js and docs/research/AR_ANCHORING.md.
+import {
+  sessionInit, requestHitTestSources, TrackingMonitor, SurfaceGate,
+  AnchoredPlacement, composeModelMatrix,
+} from "./ar_core.js";
 
 "use strict";
 
@@ -695,6 +709,7 @@ const tabletopBtn = document.getElementById("tabletopBtn");
 const rotL = document.getElementById("rotL");
 const rotR = document.getElementById("rotR");
 const sheetToggle = document.getElementById("sheetToggle");
+const reanchorBtn = document.getElementById("reanchorBtn");
 
 // UI stages. The CSS shows only the elements tagged for the current stage
 // (data-show="..."), so the page presents one decision at a time instead of
@@ -1263,50 +1278,37 @@ let lastSendAt = 0;
 //
 // So the surface measurement happens inside the frame callback, and only the
 // resulting NUMBER (metres) is cached for the tap handler to use.
-let placementAnchor = null;   // XRAnchor, when the device grants "anchors"
-// Anchor telemetry. "anchor: yes" only proves an XRAnchor object exists; it
-// says nothing about whether the runtime is still tracking it or how much it
-// is moving. These numbers separate the three ways this can look unstable:
-//   drift  - anchor pose steadily walking away from where it was created
-//            (re-localisation; the anchor is doing its job, the map moved)
-//   jitter - anchor pose twitching frame to frame (poor tracking quality:
-//            low texture, low light, or a featureless surface)
-//   untracked - runtime lost the anchor, so nothing is correcting anything
-const anchorStats = { updates: 0, untracked: 0, driftM: 0, jitterM: 0, snaps: 0, origin: null };
-let lastAnchorFrameAt = 0;
 
-// Camera travel since placement. This distinguishes the one failure that no
-// amount of anchoring can fix: a runtime tracking only ROTATION (3-DOF).
-// Under 3-DOF the reported camera position barely changes however far you
-// actually walk, so world-locked content appears to travel with you - which
-// looks exactly like "it follows me a little". If you walk a metre and
-// camTravel reads a few cm, the tracking never saw the movement, and the
-// model is faithfully world-locked to a world that is not moving.
+// ---- World locking. The logic lives in ar_core.js; see its header. ----
+// placement: follows an XRAnchor every frame (position AND yaw), or holds a
+//            fixed world matrix when the device cannot anchor.
+// tracking:  6-DoF vs rotation-only / lost. Never show or place a model while
+//            this is not "ok" - it would follow the camera.
+// gate:      surface quality under the reticle. Place only when "good".
+const placement = new AnchoredPlacement({ snapM: 0.25 });
+const tracking = new TrackingMonitor();
+const gate = new SurfaceGate({ stableFrames: 12, stableM: 0.03, minTravelM: 0.3 });
+let previewHitTestSource = null;  // planes + feature points, reticle only
+let anchorsGranted = null;        // true/false, or null when the browser does not say
+let lastTracking = "lost";
+let pendingReanchor = false;
+let reanchorRequestedAt = 0;
+let lastAimHintAt = 0;
+const REANCHOR_TIMEOUT_MS = 4000;
+const _modelMatrix = new THREE.Matrix4();
+const _hitMatrix = new THREE.Matrix4();
+const _planeHitPos = new THREE.Vector3();
+const _previewHitPos = new THREE.Vector3();
+const _viewerPos = new THREE.Vector3();
+
+// Camera travel since placement. Telemetry only now: the real 3-DoF guard is
+// TrackingMonitor (emulatedPosition + the rotation-without-translation check).
 const camStats = { origin: null, travelM: 0, maxM: 0 };
 
-// Anchor smoothing. ARCore's anchor pose twitches frame to frame when
-// tracking quality dips (fast motion, low texture), and following it raw
-// makes the model visibly shiver and snap.
-//
-// SMOOTH_TAU is a time constant, not a per-frame blend factor: the alpha is
-// recomputed from the real frame delta each tick, so the damping feels the
-// same at 30fps and 90fps and does not turn to mush if frames are dropped -
-// which is exactly when the shivering is worst.
-//
-// SNAP_M exists because smoothing a LARGE correction is wrong. A big jump
-// means the runtime re-localised and genuinely changed its mind about where
-// the room is; easing into that reads as the model sliding across the table
-// under its own power. Past this distance we take the correction instantly
-// and let it look like what it is.
 // When the runtime returns no hit at all, the reticle is placed by geometry
 // instead of by tracking: the camera's forward ray is intersected with a
-// horizontal plane a little below the camera. It is a guess, shown in amber
-// rather than green so it is never mistaken for a real surface reading - but
-// it means you can always place something, on any surface, immediately.
-// Only used when the session granted no local-floor, i.e. we have no idea
-// where the floor is. A handheld phone is held at chest-to-eye height, so the
-// floor is far further down than the 0.5 m this used to assume - that guess
-// planted the model at waist height, in mid-air.
+// horizontal plane below the camera. It is a pointer only, shown in amber,
+// and can never be placed on (see tryPlace).
 const FALLBACK_DROP_M = 1.4;    // assumed height of the surface below the camera
 const FALLBACK_MIN_M = 0.25;    // clamp the guess to a sane arm's-length range
 const FALLBACK_MAX_M = 2.5;
@@ -1315,20 +1317,14 @@ const RETICLE_TRACKED = 0x39f0c0;
 const RETICLE_ESTIMATED = 0xffb020;
 
 // y of the real floor in the current reference space, or null when unknown.
-// A local-floor session puts its origin ON the floor, so 0 is not a guess
-// there - it is the one piece of ground truth the runtime gives us.
 let floorY = null;
-// Height of the most recent TRACKED hit-test result. Hit-testing continues
-// after placement purely to keep this fresh, so "Drop to floor" has a real
-// surface to snap to even if the model was first placed on an estimate.
+// Height of the most recent plane hit; kept fresh after placement so "Drop
+// onto the floor" has a real surface to snap to.
 let lastTrackedHitY = null;
-// Added on top of every anchor-derived position. The anchor decides where the
-// model is; this is how far we have deliberately moved it off that, and it
-// has to be re-applied every frame or the anchor-follow below would undo it.
+// Deliberate vertical offset from the anchored base ("Drop onto the floor").
+// Re-applied every frame by applyPlacementPose(), on top of the anchor pose.
 let groundOffsetY = 0;
 
-const SMOOTH_TAU = 0.12;   // seconds to close ~63% of the gap
-const SNAP_M = 0.25;       // corrections beyond this are applied instantly
 let pendingPlace = false;     // a tap happened; place on the next live frame
 let surfaceExtentAtReticle = null;
 let lastSurfaceProbeAt = 0;
@@ -1448,42 +1444,28 @@ startBtn.addEventListener("click", onStartAr);
 resetBtn.addEventListener("click", () => resetPlacementState());
 placeBtn.addEventListener("click", () => tryPlace());
 floorBtn.addEventListener("click", () => dropToFloor());
+reanchorBtn.addEventListener("click", () => requestReanchor());
 
 async function onStartAr() {
   if (!navigator.xr) return;
   startBtn.disabled = true;
   try {
-    const session = await navigator.xr.requestSession("immersive-ar", {
-      requiredFeatures: ["hit-test"],
-      // plane-detection is what makes "fit to the surface I tap" work: it
-      // gives us each detected plane's polygon, hence its real extent. It is
-      // OPTIONAL - where the browser lacks it, surfaceExtentAt() returns null
-      // and the slider value is used unchanged.
-      // local-floor is NOT guaranteed for immersive-ar - the spec only
-      // promises "viewer" and "local" - so it has to be asked for, and may
-      // still be refused. See the reference-space handling below.
-      // "anchors" is what keeps a placed model glued to a real-world spot.
-      // Without it the model sits at a fixed coordinate in the session's
-      // reference space, and ARCore's ongoing re-localisation makes that
-      // coordinate drift relative to the room - the model appears to follow
-      // the camera slightly.
-      optionalFeatures: ["dom-overlay", "plane-detection", "local-floor", "anchors"],
-      domOverlay: { root: overlayRoot },
-    });
+    // sessionInit() (ar_core.js): hit-test required; anchors, local-floor,
+    // plane-detection and dom-overlay optional. "anchors" is what keeps the
+    // model glued to the room - without it we fall back to a fixed matrix.
+    const session = await navigator.xr.requestSession("immersive-ar", sessionInit(overlayRoot));
 
     xrSession = session;
     session.addEventListener("end", onSessionEnd);
 
-    // three.js defaults renderer.xr's reference space to "local-floor". On a
-    // device that did not grant it, setSession() then throws "this device
-    // does not support the requested reference space type" and AR never
-    // starts. Ask the session what it actually granted, and fall back to
-    // "local", which every immersive-ar session has.
-    //
-    // Losing local-floor costs us nothing here: it would put the origin at
-    // floor level, but the model is anchored to a hit-test result, which
-    // already carries its own real-world height.
+    // Reference space. local and local-floor are both stationary spaces:
+    // neither one drifts by itself, and neither one is what makes content
+    // world-locked - the anchor is. local-floor only buys a known floor
+    // height. three.js defaults to local-floor and throws on devices that do
+    // not grant it, so ask what was granted and fall back to local.
+    // ("unbounded" is not offered by Chrome's ARCore backend.)
     const granted = session.enabledFeatures || [];
+    anchorsGranted = session.enabledFeatures ? granted.includes("anchors") : null;
     const spaceType = granted.includes("local-floor") ? "local-floor" : "local";
     renderer.xr.setReferenceSpaceType(spaceType);
 
@@ -1499,33 +1481,23 @@ async function onStartAr() {
         throw e;
       }
     }
-    // A local-floor origin sits ON the floor, so y=0 IS the floor and the
-    // fallback below no longer has to guess. Read it from the space we ended
-    // up with, not from `granted` - the retry above may have downgraded us.
     floorY = renderer.xr.getReferenceSpaceType?.() === "local-floor"
       || spaceType === "local-floor" ? 0 : null;
     console.info("[ar] reference space:", renderer.xr.getReferenceSpace() ? spaceType : "none",
-                 "| floor y:", floorY, "| granted features:", granted);
+                 "| floor y:", floorY, "| anchors:", anchorsGranted, "| granted features:", granted);
 
+    tracking.reset();
+    gate.resetSession();
     setStage("aiming");
     xrStatus = "active";
     sendState();
-    placeHint.textContent = "Point at the floor and sweep slowly. When the ring turns green, tap Place.";
+    placeHint.textContent = gateHint();
 
-    const viewerSpace = await session.requestReferenceSpace("viewer");
-    // entityTypes defaults to ["plane"], which means the reticle only appears
-    // once ARCore has promoted a surface to a full plane - that needs visual
-    // texture, so tiles work and a plain table often never does. Adding
-    // "point" lets the ray land on raw feature points long before a plane
-    // exists. Not every runtime accepts the option, hence the fallback.
-    try {
-      hitTestSource = await session.requestHitTestSource({
-        space: viewerSpace,
-        entityTypes: ["plane", "point"],
-      });
-    } catch (e) {
-      hitTestSource = await session.requestHitTestSource({ space: viewerSpace });
-    }
+    // Plane-only source for placement (anchorable), plane+point source for
+    // the reticle preview. See requestHitTestSources() in ar_core.js.
+    const sources = await requestHitTestSources(session);
+    hitTestSource = sources.placement;
+    previewHitTestSource = sources.preview;
 
     session.addEventListener("select", onSelect);
 
@@ -1540,6 +1512,10 @@ function onSessionEnd() {
   if (hitTestSource) {
     hitTestSource.cancel();
     hitTestSource = null;
+  }
+  if (previewHitTestSource) {
+    previewHitTestSource.cancel();
+    previewHitTestSource = null;
   }
   xrSession = null;
   renderer.setAnimationLoop(null);
@@ -1560,11 +1536,12 @@ function tapDebug(note) {
   const surf = surfaceExtentAtReticle
     ? `${(surfaceExtentAtReticle * 100).toFixed(0)}cm`
     : "none";
-  const anch = placementAnchor
-    ? `yes upd=${anchorStats.updates} lost=${anchorStats.untracked} ` +
-      `drift=${(anchorStats.driftM * 100).toFixed(1)}cm ` +
-      `jit=${(anchorStats.jitterM * 1000).toFixed(1)}mm snap=${anchorStats.snaps}`
-    : "no";
+  const st = placement.stats;
+  const anch = placement.mode === "anchor"
+    ? `yes upd=${st.updates} lost=${st.untracked} ` +
+      `drift=${(st.driftM * 100).toFixed(1)}cm yaw=${st.yawCorrDeg.toFixed(2)}deg ` +
+      `jit=${(st.jitterM * 1000).toFixed(1)}mm snap=${st.snaps} re=${st.reanchors}`
+    : placement.mode;
   const cam = camStats.origin
     ? ` | camTravel=${(camStats.travelM * 100).toFixed(0)}cm max=${(camStats.maxM * 100).toFixed(0)}cm`
     : "";
@@ -1572,25 +1549,51 @@ function tapDebug(note) {
     ? (reticleEstimated ? "estimated" : "tracked")
     : "hidden";
   tapInfo.textContent =
-    `taps: ${selectCount} | reticle: ${ret} | ` +
-    `surface: ${surf} | placed: ${placed} | anchor: ${anch}${cam}` +
+    `taps: ${selectCount} | track: ${lastTracking} | surface: ${gate.level}` +
+    `${gate.reason ? "/" + gate.reason : ""} travel=${(gate.travelM * 100).toFixed(0)}cm | ` +
+    `reticle: ${ret} | plane: ${surf} | placed: ${placed} | anchor: ${anch}${cam}` +
     `${note ? " | " + note : ""}`;
+}
+
+// Coach-line text for a tracking state that is not "ok".
+function trackingHint(state) {
+  if (state === "emulated" || state === "rotation-only") {
+    return "The phone is only tracking rotation, so the model would follow you. " +
+      "Move the phone slowly side to side and point it at a well-lit, textured area.";
+  }
+  return "Tracking lost. Point at a well-lit, textured area and move slowly.";
+}
+
+// Coach-line text for the surface gate while aiming.
+function gateHint() {
+  switch (gate.level) {
+    case "blocked":
+      return trackingHint(gate.reason);
+    case "weak":
+      if (gate.reason === "points") {
+        return "Almost. Keep sweeping slowly over the floor until the ring turns green. A rug or textured spot helps.";
+      }
+      if (gate.reason === "settling") return "Hold on that spot for a moment…";
+      return "Take a step or sweep the phone side to side first, so it can see the room from a few angles.";
+    case "good":
+      return "Floor found. Tap Place.";
+    default:
+      return "Point at the floor and sweep slowly. Good light helps.";
+  }
 }
 
 // The XR "select" path. With dom-overlay active, a tap that lands on overlay
 // DOM is consumed by the DOM and never becomes an XR select - hence the
-// Place-here button below, which does not depend on this firing at all.
-// Project the camera's forward ray onto an assumed horizontal surface below
-// it. Purely geometric - no tracking data involved beyond the camera pose,
-// which is always available.
+// Place button, which does not depend on this firing at all.
+// estimateReticle() projects the camera's forward ray onto an assumed
+// horizontal surface below it: a pointer while nothing is tracked, never a
+// placement target.
 function estimateReticle() {
   if (!renderer.xr.isPresenting) return;
   const xrCam = renderer.xr.getCamera();
   xrCam.getWorldPosition(_estPos);
   _estDir.set(0, 0, -1).applyQuaternion(xrCam.getWorldQuaternion(_estQuat));
 
-  // Prefer, in order: a real tracked surface we have seen, the session's own
-  // floor, and only then the blind drop below the camera.
   const planeY = lastTrackedHitY !== null ? lastTrackedHitY
                : floorY !== null ? floorY
                : _estPos.y - FALLBACK_DROP_M;
@@ -1602,8 +1605,6 @@ function estimateReticle() {
 
   _estPos.addScaledVector(_estDir, t);
   _estPos.y = planeY;                        // keep it flat, not on the ray
-  // Translation only: the ring geometry is already baked flat, so identity
-  // rotation lies horizontal.
   reticle.matrix.makeTranslation(_estPos.x, _estPos.y, _estPos.z);
   reticle.visible = true;
   reticleEstimated = true;
@@ -1620,31 +1621,43 @@ function onSelect() {
 // the live XRHitTestResult, and hit-test results - like XRFrame itself - are
 // only valid inside the frame callback that produced them. So the tap only
 // raises a flag; onXrFrame does the work while it still legally can.
+//
+// Only a "good" surface is accepted: a plane hit (anchorable to the plane),
+// stable for a dozen frames, after enough camera travel for ARCore's map to
+// be well-conditioned, with 6-DoF tracking. Anything less and the anchor is
+// born on a guess and drifts or jumps as the map settles.
 function tryPlace() {
   if (placed) { tapDebug("already placed"); return; }
-  if (!reticle || !reticle.visible) { tapDebug("no reticle - aim at a surface"); return; }
-  // The amber ring is a guess from the camera angle, made while ARCore has not
-  // mapped the surface yet. A model placed on it rides an untracked world: it
-  // follows the camera, then jumps once tracking catches up. Only a green
-  // (hit-tested) ring gives a surface an anchor can hold on to.
-  if (reticleEstimated) {
-    placeHint.textContent = NOT_TRACKED_HINT;
-    tapDebug("surface not tracked yet");
+  if (lastTracking !== "ok") {
+    placeHint.textContent = trackingHint(lastTracking);
+    tapDebug("tracking not ok");
+    return;
+  }
+  if (gate.level !== "good") {
+    placeHint.textContent = gateHint();
+    tapDebug("surface not ready");
     return;
   }
   pendingPlace = true;
   tapDebug("placing...");
 }
 
-function applyModelRotation() {
-  if (placementGroup) placementGroup.rotation.y = THREE.MathUtils.degToRad(-modelYawDeg);
+// The single writer of the placed model's transform. Every frame, and after
+// any rotation / scale / drop change:
+//   model = anchoredBase * T(0, groundOffsetY, 0) * Ry(-yaw) * S(1/denom)
+// The uniform scale stays out of planToLocal/localToPlan - see the SCALE
+// section at the top of this file.
+function applyPlacementPose() {
+  if (!placementGroup || placement.mode === "none") return;
+  composeModelMatrix(placement.base, groundOffsetY, modelYawDeg, 1 / modelDenom, _modelMatrix);
+  _modelMatrix.decompose(placementGroup.position, placementGroup.quaternion, placementGroup.scale);
+  // worldToLocal() in maybeSendPose reads matrixWorld, so refresh it now
+  // rather than streaming last frame's pose.
+  placementGroup.updateMatrixWorld(true);
 }
 
-function applyModelScale() {
-  // Uniform scale on the group only - see the SCALE section at the top of
-  // this file for why this must not leak into planToLocal/localToPlan.
-  if (placementGroup) placementGroup.scale.setScalar(1 / modelDenom);
-}
+function applyModelRotation() { applyPlacementPose(); }
+function applyModelScale() { applyPlacementPose(); }
 
 // Real-world size of the building at the current ppm, in meters.
 function realFootprintM() {
@@ -1714,21 +1727,21 @@ function disposeGroup(group) {
 // modelDenom does not, so it only ever calls applyModelScale().
 function rebuildPlacedGeometry() {
   if (!placed || !placementGroup) return;
-  const pos = placementGroup.position.clone();
   scene.remove(placementGroup);
   disposeGroup(placementGroup);
   placementGroup = buildFloorplanGroup(planData);
-  placementGroup.position.copy(pos);
-  applyModelScale();
-  applyModelRotation();
   scene.add(placementGroup);
+  applyPlacementPose();   // the anchored base is unchanged; just re-apply it
 }
 
-function placeFloorplanAtReticle() {
-  const pos = new THREE.Vector3();
-  const quat = new THREE.Quaternion();
-  const scaleV = new THREE.Vector3();
-  reticle.matrix.decompose(pos, quat, scaleV);
+// Called from onXrFrame with the LIVE plane hit the user accepted. The model
+// origin (plan footprint centre, see planToLocal) goes exactly on the hit
+// point and the anchor is created from that same hit, so the anchor sits at
+// the model's centre: the shortest possible lever arm for any rotation
+// correction, and the best fit to ARCore's "within ~8 m of the anchor" rule.
+function placeFloorplanAtReticle(hit, hitPose, frame, refSpace) {
+  _hitMatrix.fromArray(hitPose.transform.matrix);
+  const pos = new THREE.Vector3().setFromMatrixPosition(_hitMatrix);
 
   if (placementGroup) {
     scene.remove(placementGroup);
@@ -1736,11 +1749,11 @@ function placeFloorplanAtReticle() {
   }
   placementGroup = buildFloorplanGroup(planData);
 
-  // Position-only placement (see top-of-file coordinate comment): the
-  // group keeps identity rotation so its local axes equal world axes,
-  // which keeps the pose inverse below a pure translation/scale.
-  placementGroup.position.copy(pos);
-  placementGroup.quaternion.identity();
+  // Base = hit position, no rotation (the model starts axis-aligned; the
+  // user yaws it with rotation_deg). The anchor is requested here, inside
+  // the frame, and takes over from the next frame it resolves.
+  groundOffsetY = 0;
+  placement.place(hit, _hitMatrix, pos, frame, refSpace);
 
   let fittedTo = null;
   if (autoFit) {
@@ -1750,31 +1763,31 @@ function placeFloorplanAtReticle() {
       fittedTo = surfaceExtentAtReticle;
     }
   }
-  applyModelScale();
-  applyModelRotation();
-  syncScaleUi();
   scene.add(placementGroup);
+  applyPlacementPose();
+  syncScaleUi();
 
   reticle.visible = false;
   placed = true;
+  trackingLost = false;
   setStage("placed");
   placedStatus.textContent = Math.round(modelDenom) === 1
     ? "Life-size"
     : `Tabletop, 1:${Math.round(modelDenom)}`;
-  placeHint.textContent = fittedTo
-    ? "Placed. Walk around it, or adjust below."
-    : "Placed. Adjust the size below if it looks off.";
+  if (placement.mode === "fixed" || anchorsGranted === false) {
+    placeHint.textContent =
+      "Placed, but this phone cannot anchor it. If it slides, tap Start over.";
+  } else {
+    placeHint.textContent = fittedTo
+      ? "Placed. Walk around it, or adjust below."
+      : "Placed. Adjust the size below if it looks off.";
+  }
   sendState();
 }
 
 // Move a placed model down onto the best floor height we know about, and
-// remember the correction so the anchor-follow keeps applying it. The model
-// gets planted in mid-air whenever it is placed on an estimated surface (an
-// invented plane below the camera) rather than a tracked one; this is the
-// escape hatch that does not require re-placing the whole thing.
-//
-// Preference order matches estimateReticle(): a surface ARCore has actually
-// hit beats the session's floor, which beats doing nothing at all.
+// remember the correction so applyPlacementPose keeps applying it on top of
+// the anchor every frame.
 function dropToFloor() {
   if (!placed || !placementGroup) return;
   const targetY = lastTrackedHitY !== null ? lastTrackedHitY
@@ -1787,24 +1800,33 @@ function dropToFloor() {
   }
   const delta = targetY - placementGroup.position.y;
   groundOffsetY += delta;
-  placementGroup.position.y = targetY;
+  applyPlacementPose();
   const src = lastTrackedHitY !== null ? "a detected surface" : "the session floor";
   placeHint.textContent =
     `Dropped ${Math.abs(delta * 100).toFixed(0)} cm ${delta < 0 ? "down" : "up"} onto ${src}.`;
   tapDebug("dropped to floor");
 }
 
+// Re-anchor: a new anchor at the floor the user is pointing at (normally
+// near them), keeping the model exactly where it is now. Useful at life-size
+// once you have walked far from the original tap point.
+function requestReanchor() {
+  if (!placed) return;
+  if (anchorsGranted === false) {
+    placeHint.textContent = "This phone cannot anchor. Use Start over to place it again.";
+    return;
+  }
+  pendingReanchor = true;
+  reanchorRequestedAt = performance.now();
+  placeHint.textContent = "Point at the floor near you…";
+}
+
 function resetPlacementState() {
   placed = false;
   pendingPlace = false;
-  placementAnchor = null;
-  anchorStats.updates = 0;
-  anchorStats.untracked = 0;
-  anchorStats.driftM = 0;
-  anchorStats.jitterM = 0;
-  anchorStats.snaps = 0;
-  anchorStats.origin = null;
-  lastAnchorFrameAt = 0;
+  pendingReanchor = false;
+  placement.reset();
+  gate.reset();
   camStats.origin = null;
   camStats.travelM = 0;
   camStats.maxM = 0;
@@ -1821,10 +1843,20 @@ function resetPlacementState() {
   sendState();
   if (xrSession) {
     setStage("aiming");
-    placeHint.textContent = "Point at the floor and sweep slowly. When the ring turns green, tap Place.";
+    placeHint.textContent = gateHint();
   }
 }
 
+// Frame loop. Order matters:
+//   1. tracking state (everything else depends on it)
+//   2. hit tests (plane-only = anchorable, plane+point = preview)
+//   3. not placed: surface gate, reticle, deferred placement
+//      placed:     re-read the anchor, apply the model pose, re-anchor
+//   4. hide while tracking is not 6-DoF
+//   5. stream pose (group matrixWorld already current from step 3)
+//   6. telemetry, render
+// three.js has already written this frame's viewer pose into the XR camera
+// before calling us, so the camera and the anchor are read from one frame.
 function onXrFrame(timestamp, frame) {
   if (!frame) {
     renderer.render(scene, camera);
@@ -1833,148 +1865,126 @@ function onXrFrame(timestamp, frame) {
 
   const refSpace = renderer.xr.getReferenceSpace();
 
+  // 1. Tracking.
+  const viewerPose = frame.getViewerPose(refSpace);
+  const trackState = tracking.update(viewerPose, timestamp);
+  lastTracking = trackState;
+  if (viewerPose) {
+    const p = viewerPose.transform.position;
+    _viewerPos.set(p.x, p.y, p.z);
+  }
+
+  // 2. Hit tests. Results (like the frame) are only valid inside this call.
+  let planeHit = null;
+  let planePose = null;
   if (hitTestSource) {
     const results = frame.getHitTestResults(hitTestSource);
     if (results.length > 0) {
-      const hit = results[0];
-      const pose = hit.getPose(refSpace);
-      // Recorded on EVERY frame, placed or not: a model planted on an
-      // estimated surface can then be dropped onto the real one as soon as
-      // ARCore finds it, instead of hanging in mid-air for the whole session.
-      if (pose) {
-        lastTrackedHitY = pose.transform.position.y;
-        // A real surface exists now, so the model can be dropped onto it even
-        // if it was first planted on an estimate.
-        if (placed) floorBtn.disabled = false;
-      }
+      planePose = results[0].getPose(refSpace);
+      if (planePose) planeHit = results[0];
+    }
+  }
+  let previewPose = null;
+  if (previewHitTestSource) {
+    const results = frame.getHitTestResults(previewHitTestSource);
+    if (results.length > 0) previewPose = results[0].getPose(refSpace);
+  }
+  if (planePose) {
+    lastTrackedHitY = planePose.transform.position.y;
+    if (placed) floorBtn.disabled = false;
+  }
 
-      // pose can be null on a frame where the hit result cannot be resolved
-      // into the reference space; nothing below is meaningful without it.
-      if (!placed && pose) {
-        reticle.visible = true;
-        reticle.matrix.fromArray(pose.transform.matrix);
-        if (reticleEstimated) {
-          reticleEstimated = false;
-          reticle.material.color.setHex(RETICLE_TRACKED);
-        }
+  // Camera travel accumulates for the whole session, placed or not.
+  gate.update({
+    trackingState: trackState,
+    planeHitPos: planePose ? _planeHitPos.copy(planePose.transform.position) : null,
+    previewHitPos: previewPose ? _previewHitPos.copy(previewPose.transform.position) : null,
+    camPos: viewerPose ? _viewerPos : null,
+  });
 
-        // Measure the surface under the reticle HERE, where `frame` is still
-        // valid, and keep only the resulting number for the tap handler.
-        if (timestamp - lastSurfaceProbeAt > SURFACE_PROBE_MS) {
-          lastSurfaceProbeAt = timestamp;
-          _reticlePos.setFromMatrixPosition(reticle.matrix);
-          try {
-            surfaceExtentAtReticle = surfaceExtentAt(_reticlePos, frame, refSpace);
-          } catch (err) {
-            surfaceExtentAtReticle = null;   // plane-detection not granted
-          }
-        }
-
-        if (pendingPlace) {
-          pendingPlace = false;
-          try {
-            placeFloorplanAtReticle();
-            tapDebug("placed ok");
-          } catch (err) {
-            appendError("Placement failed: " + ((err && err.stack) || err));
-            tapDebug("threw: " + (err && err.message));
-          }
-          // Anchor to the hit result while it is still live. Async, and the
-          // model is already visible - the anchor just takes over drift
-          // correction once it resolves.
-          if (placed && typeof hit.createAnchor === "function") {
-            hit.createAnchor().then(
-              (anchor) => { placementAnchor = anchor; },
-              () => { placementAnchor = null; }   // refused: fall back to static
-            );
-          }
-        }
-      }
-    } else if (!placed) {
-      // Nothing tracked here - fall back to a geometric guess so the user is
-      // never stuck waiting for ARCore to find features.
+  // 3a. Aiming.
+  if (!placed) {
+    const shownPose = trackState === "ok" ? (planePose || previewPose) : null;
+    if (shownPose) {
+      reticle.visible = true;
+      reticle.matrix.fromArray(shownPose.transform.matrix);
+      const good = gate.level === "good";
+      reticleEstimated = !good;
+      reticle.material.color.setHex(good ? RETICLE_TRACKED : RETICLE_ESTIMATED);
+    } else {
       estimateReticle();
+    }
+
+    if (planePose && timestamp - lastSurfaceProbeAt > SURFACE_PROBE_MS) {
+      lastSurfaceProbeAt = timestamp;
+      _reticlePos.setFromMatrixPosition(_hitMatrix.fromArray(planePose.transform.matrix));
+      try {
+        surfaceExtentAtReticle = surfaceExtentAt(_reticlePos, frame, refSpace);
+      } catch (err) {
+        surfaceExtentAtReticle = null;   // plane-detection not granted
+      }
+    } else if (!planePose) {
       surfaceExtentAtReticle = null;
-      // The tap was accepted on a green ring, but the surface was lost before
-      // this frame. Never place on the estimate (see tryPlace).
-      if (pendingPlace) {
-        pendingPlace = false;
-        placeHint.textContent = NOT_TRACKED_HINT;
+    }
+
+    placeBtn.disabled = gate.level !== "good";
+    if (timestamp - lastAimHintAt > 300) {
+      lastAimHintAt = timestamp;
+      placeHint.textContent = gateHint();
+    }
+
+    if (pendingPlace) {
+      pendingPlace = false;
+      if (planeHit && gate.level === "good") {
+        try {
+          placeFloorplanAtReticle(planeHit, planePose, frame, refSpace);
+          tapDebug("placed ok");
+        } catch (err) {
+          appendError("Placement failed: " + ((err && err.stack) || err));
+          tapDebug("threw: " + (err && err.message));
+        }
+      } else {
+        // Accepted on a good ring, but the surface went away before this frame.
+        placeHint.textContent = gateHint();
         tapDebug("surface lost - not placed");
       }
     }
   }
 
-  // Follow the anchor. ARCore re-localises continuously, so the anchor's pose
-  // in the reference space changes over time - re-reading it every frame is
-  // what keeps the model on the real table instead of sliding with the
-  // camera. Position only: the placement contract requires identity rotation
-  // on the group so the pose inverse stays a pure translation/scale.
-  if (placed && placementGroup && placementAnchor) {
-    const tracked = frame.trackedAnchors;
-    if (tracked && !tracked.has(placementAnchor)) {
-      anchorStats.untracked++;
-    } else {
-      const anchorPose = frame.getPose(placementAnchor.anchorSpace, refSpace);
-      if (anchorPose) {
-        const t = anchorPose.transform.position;
-        _anchorPos.set(t.x, t.y, t.z);
+  // 3b. Placed: re-read the anchor and write the model pose, every frame.
+  if (placed && placementGroup) {
+    placement.update(frame, refSpace);
+    applyPlacementPose();
 
-        // Where the model should sit: the anchor, plus however far we have
-        // deliberately moved it off the anchor ("Drop to floor"). Applied
-        // every frame, because the anchor-follow below overwrites position
-        // outright and would otherwise undo the drop on the next frame.
-        _anchorTarget.copy(_anchorPos);
-        _anchorTarget.y += groundOffsetY;
-
-        if (anchorStats.origin === null) {
-          // First pose: adopt it outright. Easing in from the tap position
-          // would make the model drift into place on arrival.
-          anchorStats.origin = _anchorPos.clone();
-          _prevAnchorPos.copy(_anchorPos);
-          placementGroup.position.copy(_anchorTarget);
-        } else {
-          // Jitter is measured on the RAW pose, deliberately: comparing
-          // against the smoothed position would measure our own damping.
-          const step = _anchorPos.distanceTo(_prevAnchorPos);
-          anchorStats.jitterM = anchorStats.jitterM * 0.9 + step * 0.1;
-          anchorStats.driftM = _anchorPos.distanceTo(anchorStats.origin);
-          _prevAnchorPos.copy(_anchorPos);
-
-          const gap = _anchorTarget.distanceTo(placementGroup.position);
-          if (gap > SNAP_M) {
-            placementGroup.position.copy(_anchorTarget);
-            anchorStats.snaps++;
-          } else {
-            const dt = lastAnchorFrameAt
-              ? Math.min(0.1, (timestamp - lastAnchorFrameAt) / 1000)
-              : 0;
-            const alpha = dt > 0 ? 1 - Math.exp(-dt / SMOOTH_TAU) : 1;
-            placementGroup.position.lerp(_anchorTarget, alpha);
-          }
-        }
-        lastAnchorFrameAt = timestamp;
-        anchorStats.updates++;
+    if (pendingReanchor) {
+      if (planeHit && trackState === "ok") {
+        pendingReanchor = false;
+        _hitMatrix.fromArray(planePose.transform.matrix);
+        placement.reanchor(planeHit, _hitMatrix, frame, refSpace);
+        placeHint.textContent = "Re-anchored to the floor near you.";
+        tapDebug("re-anchor requested");
+      } else if (timestamp - reanchorRequestedAt > REANCHOR_TIMEOUT_MS) {
+        pendingReanchor = false;
+        placeHint.textContent = "No floor found to re-anchor to. Point at the floor near you and try again.";
       }
     }
   }
 
-  // Rotation-only tracking. When ARCore loses position (camera pointed at a
-  // blank wall, covered, moved too fast) it keeps reporting orientation but
-  // freezes position (emulatedPosition), so world-locked content appears to
-  // follow the camera. Hide the model and stop streaming pose until real
-  // tracking returns, instead of showing it in the wrong place.
-  const viewerPose = frame.getViewerPose(refSpace);
-  const posLost = !viewerPose || viewerPose.emulatedPosition === true;
+  // 4. Not 6-DoF (no pose, emulatedPosition, or rotation without
+  // translation): world-locked content would appear to follow the camera.
+  // Hide the model and pause pose streaming until real tracking returns;
+  // the anchor puts it back where it belongs.
+  const posLost = trackState !== "ok";
   if (placed && placementGroup && posLost !== trackingLost) {
     trackingLost = posLost;
     placementGroup.visible = !posLost;
     placeHint.textContent = posLost
-      ? "Tracking lost. Point back at where you placed it and move slowly."
+      ? trackingHint(trackState)
       : "Tracking back. Walk around it, or adjust below.";
     tapDebug(posLost ? "tracking lost" : "tracking back");
   }
 
+  // 5. Pose stream.
   if (placed && placementGroup && !trackingLost) {
     maybeSendPose(timestamp);
 
@@ -1988,6 +1998,7 @@ function onXrFrame(timestamp, frame) {
     }
   }
 
+  // 6. Telemetry + render.
   if (timestamp - lastTapDebugAt > 500) {
     lastTapDebugAt = timestamp;
     tapDebug();
@@ -1999,16 +2010,10 @@ function onXrFrame(timestamp, frame) {
 
 let reticleEstimated = false;
 let trackingLost = false;
-const NOT_TRACKED_HINT =
-  "Surface not found yet. Move the phone slowly side to side over the spot " +
-  "until the ring turns green, then tap Place. Plain floors take longer; a rug or textured spot helps.";
 const _reticlePos = new THREE.Vector3();
 const _estPos = new THREE.Vector3();
 const _estDir = new THREE.Vector3();
 const _estQuat = new THREE.Quaternion();
-const _anchorPos = new THREE.Vector3();
-const _anchorTarget = new THREE.Vector3();
-const _prevAnchorPos = new THREE.Vector3();
 const _camTrack = new THREE.Vector3();
 const _camPos = new THREE.Vector3();
 const _camQuat = new THREE.Quaternion();
@@ -2018,20 +2023,22 @@ const _groupQuatInv = new THREE.Quaternion();
 // Tracking telemetry for remote debugging. Carries a "type", so viewers
 // ignore it per PROTOCOL.md; a laptop-side listener can log it while
 // someone walks with the phone.
-const AR_BUILD = "2026-11-08-diag1";
+const AR_BUILD = "2026-11-20-anchor-yaw";
 function sendDiag(frame, refSpace, viewerPose) {
   if (!socket || socket.readyState !== WebSocket.OPEN) return;
   const r3 = (v) => v ? [+v.x.toFixed(3), +v.y.toFixed(3), +v.z.toFixed(3)] : null;
+  const anchor = placement.anchor;
   let anchorPos = null;
   let anchorTracked = null;
-  if (placementAnchor) {
+  if (anchor) {
     const tracked = frame.trackedAnchors;
-    anchorTracked = tracked ? tracked.has(placementAnchor) : null;
+    anchorTracked = tracked ? tracked.has(anchor) : null;
     try {
-      const p = frame.getPose(placementAnchor.anchorSpace, refSpace);
+      const p = frame.getPose(anchor.anchorSpace, refSpace);
       if (p) anchorPos = r3(p.transform.position);
     } catch (e) { /* anchor deleted */ }
   }
+  const st = placement.stats;
   socket.send(JSON.stringify({
     type: "diag",
     build: AR_BUILD,
@@ -2039,13 +2046,22 @@ function sendDiag(frame, refSpace, viewerPose) {
     refSpace: renderer.xr.getReferenceSpaceType?.() ?? null,
     granted: xrSession && xrSession.enabledFeatures ? [...xrSession.enabledFeatures] : null,
     emulated: viewerPose ? viewerPose.emulatedPosition : null,
+    tracking: lastTracking,
+    surface: gate.level,
+    surfaceReason: gate.reason,
+    sessionTravelM: +gate.travelM.toFixed(2),
     cam: viewerPose ? r3(viewerPose.transform.position) : null,
     group: placementGroup ? r3(placementGroup.position) : null,
     groupVisible: placementGroup ? placementGroup.visible : null,
     placed,
-    hasAnchor: !!placementAnchor,
+    placementMode: placement.mode,
+    hasAnchor: !!anchor,
     anchorTracked,
     anchor: anchorPos,
+    anchorDriftM: +st.driftM.toFixed(3),
+    anchorYawCorrDeg: +st.yawCorrDeg.toFixed(2),
+    anchorJitterMm: +(st.jitterM * 1000).toFixed(1),
+    reanchors: st.reanchors,
     denom: modelDenom,
   }));
 }
