@@ -94,8 +94,8 @@ src/
 ## Gotchas
 
 - **Two scale factors, never mixed.** `ppm` (plan px per real metre) is inside the plan-to-metres mapping; the 1:N miniature (`model_denom`) is only a group scale. That is why live-map positions stay in true plan pixels at any miniature size.
-- **Both devices need the same plan.** Poses are plan pixels of the plan the phone opened, and projects are stored per browser. Add the same example or file on both.
+- **The phone shares its plan.** Poses are plan pixels of the plan the phone opened, and projects are stored per browser, so the AR page sends its plan to the hub (`{type:"plan"}`, max 2 MB). The server hub replays it to late viewers, and `/map` follows it with a Save to library button. The legacy 8765 hub forwards it but does not replay it.
 - **The AR frame loop lives outside React** (`features/ar/ArController.ts`). Do not move per-frame state into React state.
 - **`arCore.ts` mirrors `deliverables/livemap/ar_core.js`**, and `lib/plan` mirrors `plan_ops.js`. Change them together.
 - **pnpm 11**: `pnpm add` can crash on this workspace file; edit `package.json` and run `pnpm install`. `pnpm-workspace.yaml` allows the esbuild build script.
-- **Scene Viewer on Android** opens models by URL; a model built on the device (a blob URL) may not open there. The fallback page offers the GLB download.
+- **Scene Viewer on Android** opens models by URL, not blob URLs, so the fallback uploads the GLB to `POST /api/models` (15 min TTL) and uses that https URL. In demo mode it keeps the blob URL; the GLB download is always offered.

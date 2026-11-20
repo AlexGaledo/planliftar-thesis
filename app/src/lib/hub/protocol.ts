@@ -9,6 +9,8 @@
  *  - Unknown `type` values are ignored silently, so the protocol can grow.
  */
 
+import type { RawPlan } from "@/lib/plan/types";
+
 export type HubRole = "phone" | "viewer";
 
 /** Phone -> viewers. x/y in plan px; yaw 0 = plan -Y ("up"), clockwise. ~10 Hz. */
@@ -47,12 +49,37 @@ export interface PhoneState {
   xr: XrStatus;
 }
 
+/**
+ * Phone -> viewers: the plan the phone has open (PROTOCOL.md "Plan"). The
+ * server's /ws hub caches the latest one and replays it to viewers that join
+ * later. `plan` is the stored RawPlan; `plan_id` is the PHONE's project id.
+ */
+export interface SharedPlan {
+  plan_id: string;
+  name: string;
+  plan: RawPlan;
+  ppm?: number;
+  wall_height_m?: number;
+}
+
+/** The hub drops plan messages above this (PROTOCOL.md). */
+export const SHARED_PLAN_MAX_BYTES = 2 * 1024 * 1024;
+/** The legacy server.py hub closes the socket on frames above 1 MiB. */
+export const LEGACY_HUB_MAX_BYTES = 1024 * 1024 - 1024;
+
+/** The wire form of a plan message, or null when it is over `maxBytes`. */
+export function encodeSharedPlan(shared: SharedPlan, maxBytes = SHARED_PLAN_MAX_BYTES): string | null {
+  const text = JSON.stringify({ type: "plan", ...shared });
+  return new Blob([text]).size <= maxBytes ? text : null;
+}
+
 export type HubMessage =
   | { kind: "pose"; pose: PoseMessage }
   | { kind: "state"; state: PhoneState }
   | { kind: "control"; patch: ControlPatch }
   | { kind: "hello" }
   | { kind: "diag"; data: Record<string, unknown> }
+  | { kind: "plan"; shared: SharedPlan }
   | { kind: "ignored" };
 
 /**
@@ -87,6 +114,21 @@ export function parseHubMessage(raw: unknown): HubMessage {
       return { kind: "hello" };
     case "diag":
       return { kind: "diag", data: m };
+    case "plan": {
+      const p = m.plan as Record<string, unknown> | null;
+      if (!p || typeof p !== "object" || Array.isArray(p) || !Array.isArray(p.walls)) return { kind: "ignored" };
+      const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) && v > 0 ? v : undefined);
+      return {
+        kind: "plan",
+        shared: {
+          plan_id: typeof m.plan_id === "string" ? m.plan_id : "",
+          name: typeof m.name === "string" && m.name.trim() ? m.name.slice(0, 200) : "Shared plan",
+          plan: p as unknown as RawPlan,
+          ppm: num(m.ppm),
+          wall_height_m: num(m.wall_height_m),
+        },
+      };
+    }
     default:
       return { kind: "ignored" };
   }

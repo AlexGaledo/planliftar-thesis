@@ -72,6 +72,13 @@ export class HubClient {
     return true;
   }
 
+  /** Send an already-encoded JSON message (e.g. encodeSharedPlan's output). */
+  sendText(text: string): boolean {
+    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) return false;
+    this.socket.send(text);
+    return true;
+  }
+
   sendPose(pose: PoseMessage): boolean {
     return this.send(pose);
   }

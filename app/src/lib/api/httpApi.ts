@@ -114,5 +114,18 @@ export function createHttpApi(serverUrl: string): PlanApi {
     overlayUrl(id: string) {
       return `${base}/jobs/${encodeURIComponent(id)}/overlay.png`;
     },
+
+    async uploadModel(glb: Blob) {
+      const res = await request(
+        "/models",
+        { method: "POST", body: glb, headers: { "Content-Type": "model/gltf-binary" } },
+        UPLOAD_TIMEOUT_MS,
+      );
+      if (!res.ok) throw new ApiError(await readError(res, where), res.status);
+      const body = await readJson<{ url?: string }>(res, where);
+      if (!body.url || !/^https?:\/\//i.test(body.url))
+        throw new ApiError("The server stored the model but returned no usable address.");
+      return body.url;
+    },
   };
 }

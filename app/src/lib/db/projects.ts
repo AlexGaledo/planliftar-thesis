@@ -51,6 +51,39 @@ export async function createProject(input: NewProjectInput): Promise<Project> {
   return project;
 }
 
+/** What a phone shares over the hub (PROTOCOL.md "Plan"); see lib/hub/protocol.ts. */
+export interface SharedPlanInput {
+  plan_id: string;
+  name: string;
+  plan: RawPlan;
+  ppm?: number;
+  wall_height_m?: number;
+}
+
+const SAFE_ID = /^[A-Za-z0-9_-]{1,64}$/;
+
+/**
+ * A project record for a plan shared by the phone (not saved). It keeps the
+ * phone's project id when that id is safe, so the phone's AR link and this
+ * device's library agree once saved.
+ */
+export function sharedPlanProject(shared: SharedPlanInput): Project {
+  const p = makeProject({ name: shared.name, plan: shared.plan, origin: "import" });
+  if (SAFE_ID.test(shared.plan_id)) p.id = shared.plan_id;
+  if (shared.ppm) p.ppm = shared.ppm;
+  if (shared.wall_height_m) p.wallHeightM = shared.wall_height_m;
+  return p;
+}
+
+/** Save a shared plan to this device's library; returns the existing copy if already saved. */
+export async function saveSharedPlan(shared: SharedPlanInput): Promise<Project> {
+  const project = sharedPlanProject(shared);
+  const existing = await db.projects.get(project.id);
+  if (existing) return existing;
+  await db.projects.add(project);
+  return project;
+}
+
 export async function renameProject(id: string, name: string): Promise<void> {
   const clean = name.trim();
   if (!clean) throw new Error("A project needs a name.");

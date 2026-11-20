@@ -14,6 +14,8 @@ import type { PreparedPlan } from "@/lib/db/hooks";
 import { setProjectScale } from "@/lib/db/projects";
 import { longestSidePx } from "@/lib/plan";
 import { useHubUrl } from "@/lib/hub/useHubUrl";
+import { encodeSharedPlan, LEGACY_HUB_MAX_BYTES, SHARED_PLAN_MAX_BYTES } from "@/lib/hub/protocol";
+import { useSettings } from "@/stores/settings";
 import { ProjectGate } from "../plan/ProjectGate";
 import { ArController, type ArUiState } from "./ArController";
 import { ArOverlay } from "./ArOverlay";
@@ -40,7 +42,15 @@ function ArSession({ project, prepared }: { project: Project; prepared: Prepared
   // project in IndexedDB, which re-renders this component with a new object.
   // Recreating the controller then would end the AR session. So it is created
   // once per project id, from the values at that moment (kept in a ref).
-  const initial = useRef({ plan: prepared.plan, ppm: project.ppm, wallHeightM: project.wallHeightM, hubUrl, fake });
+  const hubMode = useSettings((s) => s.hubMode);
+  // Share the stored plan with the live map (PROTOCOL.md "Plan"). Encoded once.
+  const [sharedPlanMessage] = useState(() =>
+    encodeSharedPlan(
+      { plan_id: project.id, name: project.name, plan: project.plan, ppm: project.ppm, wall_height_m: project.wallHeightM },
+      hubMode === "legacy" ? LEGACY_HUB_MAX_BYTES : SHARED_PLAN_MAX_BYTES,
+    ),
+  );
+  const initial = useRef({ plan: prepared.plan, ppm: project.ppm, wallHeightM: project.wallHeightM, hubUrl, fake, sharedPlanMessage });
 
   useEffect(() => {
     let saveTimer: ReturnType<typeof setTimeout> | undefined;

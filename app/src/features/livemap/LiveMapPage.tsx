@@ -8,12 +8,12 @@
  * Positions are plan pixels of the plan the PHONE has open, so both devices
  * must show the same plan (same file, gap closure on/off the same).
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import type { Project } from "@/lib/db/db";
 import type { PreparedPlan } from "@/lib/db/hooks";
 import { useHubUrl } from "@/lib/hub/useHubUrl";
-import { useViewerHub } from "@/lib/hub/useViewerHub";
+import { useViewerHub, type ViewerHub } from "@/lib/hub/useViewerHub";
 import type { PoseMessage } from "@/lib/hub/protocol";
 import { ProjectGate } from "../plan/ProjectGate";
 import { ControlPanel } from "./ControlPanel";
@@ -40,7 +40,16 @@ const STATUS_TEXT = {
   closed: "Disconnected",
 } as const;
 
-function LiveMap({ project, prepared }: { project: Project; prepared: PreparedPlan }) {
+interface LiveMapProps {
+  project: Project;
+  prepared: PreparedPlan;
+  /** an already-connected viewer hub (the /map page's); otherwise LiveMap connects its own */
+  hub?: ViewerHub;
+  /** shown instead of the project link when the plan came from the phone, not the library */
+  sharedHeader?: ReactNode;
+}
+
+export function LiveMap({ project, prepared, hub: externalHub, sharedHeader }: LiveMapProps) {
   const url = useHubUrl();
   const track = useRef<LiveTrack>({ latest: null, trail: [] });
   const [lastPoseAt, setLastPoseAt] = useState(0);
@@ -54,7 +63,12 @@ function LiveMap({ project, prepared }: { project: Project; prepared: PreparedPl
     if (t.trail.length > TRAIL_MAX) t.trail.shift();
     setLastPoseAt(performance.now());
   }, []);
-  const hub = useViewerHub(url, onPose);
+  const ownHub = useViewerHub(externalHub ? null : url, onPose);
+  const hub = externalHub ?? ownHub;
+  const subscribe = externalHub?.subscribePoses;
+  useEffect(() => subscribe?.(onPose), [subscribe, onPose]);
+  // The phone shared a different plan than this one: its poses are in that plan's pixels.
+  const otherPlan = !sharedHeader && hub.sharedPlan && hub.sharedPlan.plan_id !== project.id ? hub.sharedPlan : null;
 
   // Simulated walker for demos without a phone; it feeds the same pose path a phone would.
   const [demoWalk, setDemoWalk] = useState(false);
@@ -107,9 +121,17 @@ function LiveMap({ project, prepared }: { project: Project; prepared: PreparedPl
       <div className={styles.mapArea}>
         <header className={styles.hud}>
           <div>
-            <p className="small">
-              <Link to={`/projects/${project.id}`}>{project.name}</Link>
-            </p>
+            {sharedHeader ?? (
+              <p className="small">
+                <Link to={`/projects/${project.id}`}>{project.name}</Link>
+              </p>
+            )}
+            {otherPlan && (
+              <p className="small" role="status" data-testid="other-plan">
+                The phone has &ldquo;{otherPlan.name}&rdquo; open, not this plan.{" "}
+                <Link to="/map?shared=1">Follow the phone&apos;s plan</Link>
+              </p>
+            )}
             <p className={styles.status} role="status">
               <span
                 className={`dot ${demoWalk || (hub.status === "open" && live) ? "dot-live" : hub.status === "open" ? "" : "dot-warn"}`}
@@ -165,8 +187,7 @@ function LiveMap({ project, prepared }: { project: Project; prepared: PreparedPl
               </p>
             )}
             <p className="small muted">
-              Both devices need the same plan. The phone keeps its own project list, so add the same
-              file or example there.
+              When the phone opens AR it shares its plan, and the Live map tab follows it on its own.
             </p>
             <div className="row">
               <button

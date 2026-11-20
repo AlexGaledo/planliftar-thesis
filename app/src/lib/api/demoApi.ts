@@ -81,5 +81,9 @@ export function createDemoApi(now: () => number = () => Date.now()): PlanApi {
     overlayUrl() {
       return null;
     },
+
+    async uploadModel() {
+      return null; // no server to host it; the fallback keeps its blob: URL
+    },
   };
 }

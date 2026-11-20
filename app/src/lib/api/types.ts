@@ -37,6 +37,12 @@ export interface PlanApi {
   getJob(id: string): Promise<Job>;
   /** URL of the optional debug overlay, or null when the client has none. */
   overlayUrl(id: string): string | null;
+  /**
+   * Host a GLB on the server for a short time (POST /api/models) and return its
+   * absolute http(s) URL, which Android Scene Viewer can open. null when this
+   * client has no server (demo mode).
+   */
+  uploadModel(glb: Blob): Promise<string | null>;
 }
 
 export const isTerminal = (status: JobStatus) => status === "done" || status === "error";

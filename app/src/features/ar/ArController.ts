@@ -86,6 +86,12 @@ export interface ArControllerOptions {
   wallHeightM: number;
   hubUrl: string;
   fake: boolean;
+  /**
+   * Encoded {"type":"plan"} message (protocol.ts encodeSharedPlan), sent on
+   * every hub (re)connect so the laptop's map can draw this plan without
+   * having it in its own library. null = too big to share.
+   */
+  sharedPlanMessage?: string | null;
   onUi: (ui: ArUiState) => void;
   /** the user changed the building length on the phone: persist the new ppm */
   onPpmChange?: (ppm: number) => void;
@@ -189,7 +195,11 @@ export class ArController {
         this.hubStatus = s;
         this.emit();
       },
-      onOpen: () => this.sendState(), // so a panel already open picks us up
+      onOpen: () => {
+        // The plan first, so a viewer has its coordinate space before poses arrive.
+        if (opts.sharedPlanMessage) this.hub.sendText(opts.sharedPlanMessage);
+        this.sendState(); // so a panel already open picks us up
+      },
       onMessage: (msg) => {
         if (msg.kind === "control") this.applyControlPatch(msg.patch);
         else if (msg.kind === "hello") this.sendState();

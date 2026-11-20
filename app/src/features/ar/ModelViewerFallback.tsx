@@ -20,6 +20,7 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import type { Project } from "@/lib/db/db";
 import type { PreparedPlan } from "@/lib/db/hooks";
+import { usePlanApi } from "@/lib/api";
 import { downloadBlob, planToGlb, safeFilename } from "@/lib/three/exportGlb";
 import styles from "./ar.module.css";
 
@@ -38,6 +39,7 @@ export function ModelViewerFallback({ project, prepared, reason }: ModelViewerFa
   const [src, setSrc] = useState<string | null>(null);
   const [blob, setBlob] = useState<Blob | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const api = usePlanApi();
 
   useEffect(() => {
     let url: string | null = null;
@@ -51,9 +53,18 @@ export function ModelViewerFallback({ project, prepared, reason }: ModelViewerFa
           wallHeightM: project.wallHeightM,
         });
         if (cancelled) return;
-        url = URL.createObjectURL(glb);
         setBlob(glb);
-        setSrc(url);
+        // Scene Viewer (Android) is a separate app and cannot open blob: URLs, so
+        // host the GLB on the server briefly and use its https URL. Demo mode or a
+        // failed upload keeps the blob URL (in-page viewer, Quick Look, download).
+        const hosted = await api.uploadModel(glb).catch(() => null);
+        if (cancelled) return;
+        if (hosted) {
+          setSrc(hosted);
+        } else {
+          url = URL.createObjectURL(glb);
+          setSrc(url);
+        }
       } catch (e) {
         if (!cancelled) setError((e as Error).message);
       }
@@ -62,7 +73,7 @@ export function ModelViewerFallback({ project, prepared, reason }: ModelViewerFa
       cancelled = true;
       if (url) URL.revokeObjectURL(url);
     };
-  }, [prepared.plan, project.ppm, project.wallHeightM]);
+  }, [api, prepared.plan, project.ppm, project.wallHeightM]);
 
   return (
     <div className={`page page-narrow ${styles.fallback}`}>
