@@ -135,7 +135,7 @@ def ensure_cert(paths: CertPaths, ips: list[str], force: bool = False) -> CertPa
     from cryptography.hazmat.primitives.asymmetric import rsa
     from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID
 
-    paths.dir.mkdir(parents=True, exist_ok=True)
+    paths.dir.mkdir(mode=0o700, parents=True, exist_ok=True)
     now = datetime.datetime.now(datetime.timezone.utc)
     not_before, not_after = now - datetime.timedelta(minutes=5), now + datetime.timedelta(days=365)
 
@@ -195,11 +195,20 @@ def ensure_cert(paths: CertPaths, ips: list[str], force: bool = False) -> CertPa
     chain_pem = leaf.public_bytes(serialization.Encoding.PEM) + ca_pem
     # Key first, each via temp-then-rename, so a crash never leaves a cert
     # without its key.
+    # The key's temp file is created owner-only and locked down (ACL on
+    # Windows) while still empty, so the secret is never readable by others,
+    # even briefly. A failed restriction is fatal. Rename keeps the ACL.
     for path, blob in ((paths.key, key_pem), (paths.chain, chain_pem), (paths.ca, ca_pem)):
         tmp = path.with_suffix(path.suffix + ".tmp")
-        tmp.write_bytes(blob)
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_BINARY", 0),
+                     0o600 if path == paths.key else 0o644)
+        with os.fdopen(fd, "wb") as f:
+            if path == paths.key and not restrict_key_permissions(tmp):
+                f.close()
+                tmp.unlink(missing_ok=True)
+                raise RuntimeError(f"could not restrict permissions on {tmp}; refusing to write the TLS key")
+            f.write(blob)
         os.replace(tmp, path)
-    restrict_key_permissions(paths.key)
     print(f"[tls] issued a leaf for {', '.join(str(a) for a in addresses)}, localhost "
           "from a single-use, name-constrained local CA (CA key never written to disk)")
     return paths
