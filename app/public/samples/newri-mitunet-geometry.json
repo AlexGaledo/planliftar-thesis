@@ -1,0 +1,137 @@
+{
+  "schema_version": "1.0",
+  "source": {
+    "image_width_px": 719,
+    "image_height_px": 1020
+  },
+  "scale": {
+    "pixels_per_meter": 100.0,
+    "source": "assumed_default",
+    "confidence": 0.0
+  },
+  "origin_px": [
+    0.0,
+    0.0
+  ],
+  "walls": [
+    {
+      "id": "w0",
+      "start": [
+        394.125,
+        611.25
+      ],
+      "end": [
+        632.0,
+        610.5
+      ],
+      "thickness_px": 10.0,
+      "height_m": 2.7
+    },
+    {
+      "id": "w1",
+      "start": [
+        47.25,
+        853.5625
+      ],
+      "end": [
+        144.0,
+        854.125
+      ],
+      "thickness_px": 18.0,
+      "height_m": 2.7
+    },
+    {
+      "id": "w2",
+      "start": [
+        281.0,
+        854.125
+      ],
+      "end": [
+        609.0,
+        854.125
+      ],
+      "thickness_px": 20.0,
+      "height_m": 2.7
+    },
+    {
+      "id": "w3",
+      "start": [
+        45.5,
+        119.0
+      ],
+      "end": [
+        47.25,
+        853.5625
+      ],
+      "thickness_px": 32.0,
+      "height_m": 2.7
+    },
+    {
+      "id": "w4",
+      "start": [
+        394.125,
+        611.25
+      ],
+      "end": [
+        393.25,
+        655.0
+      ],
+      "thickness_px": 12.0,
+      "height_m": 2.7
+    },
+    {
+      "id": "w5",
+      "start": [
+        393.25,
+        768.0
+      ],
+      "end": [
+        393.25,
+        853.0
+      ],
+      "thickness_px": 12.0,
+      "height_m": 2.7
+    },
+    {
+      "id": "w6",
+      "start": [
+        607.0,
+        373.0
+      ],
+      "end": [
+        607.0,
+        459.0
+      ],
+      "thickness_px": 32.0,
+      "height_m": 2.7
+    },
+    {
+      "id": "w7",
+      "start": [
+        645.3571428571429,
+        84.0
+      ],
+      "end": [
+        645.3571428571429,
+        340.0
+      ],
+      "thickness_px": 32.0,
+      "height_m": 2.7
+    },
+    {
+      "id": "w8",
+      "start": [
+        645.3571428571429,
+        491.0
+      ],
+      "end": [
+        645.3571428571429,
+        846.0
+      ],
+      "thickness_px": 32.0,
+      "height_m": 2.7
+    }
+  ],
+  "openings": [],
+  "rooms": []
+}
