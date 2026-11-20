@@ -13,3 +13,17 @@ scipy>=1.11
 pillow>=10.0
 shapely>=2.0                          # CubiCasa post-processing
 gdown>=5.0                            # CubiCasa checkpoint lives on Google Drive
+
+# --- server (backend/server, run_server.py); tested with fastapi 0.140, uvicorn 0.51 ---
+fastapi>=0.115
+uvicorn>=0.30
+websockets>=12.0                      # uvicorn's WebSocket implementation (/ws hub)
+python-multipart>=0.0.9               # multipart uploads (POST /api/jobs)
+cryptography>=42                      # --tls: local CA + LAN certificate
+
+# --- optional ---
+# qrcode>=7.4                         # prints a QR code of the phone URL at startup
+
+# --- tests: python -m pytest  (from backend/) ---
+pytest>=8
+httpx>=0.27                           # FastAPI TestClient
