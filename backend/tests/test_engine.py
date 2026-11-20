@@ -48,11 +48,31 @@ def test_bad_inputs_raise_input_error():
         raise AssertionError("unknown option accepted")
 
 
+def test_progress_cb_is_optional_and_safe():
+    seen = []
+    try:
+        run_pipeline(b"not an image", None, progress_cb=lambda st, p: seen.append((st, p)))
+    except InputError:
+        pass
+    assert seen == [("decoding image", 0.02)]
+
+    def boom(stage, progress):
+        raise RuntimeError("callback bug")
+    try:
+        run_pipeline(b"not an image", None, progress_cb=boom)   # still an InputError
+    except InputError:
+        pass
+
+
 def test_end_to_end_mitunet_only():
     if not SAMPLE.exists() or not (weights.WEIGHTS_DIR / weights.MITUNET_FILE).exists():
         print("skip: sample/weights not cached")
         return
-    plan = run_pipeline(SAMPLE.read_bytes(), PipelineOptions(use_cubicasa=False))
+    seen = []
+    plan = run_pipeline(SAMPLE.read_bytes(), PipelineOptions(use_cubicasa=False),
+                        progress_cb=lambda st, p: seen.append((st, p)))
+    progress = [p for _, p in seen]
+    assert progress == sorted(progress) and seen[-1] == ("done", 1.0)
     assert plan["schema_version"] == "2.0"
     assert plan["source"]["image_width_px"] == 2730
     assert plan["acceptance"]["wall_thickness_px"] == 26.0       # == v9_out.txt t_med

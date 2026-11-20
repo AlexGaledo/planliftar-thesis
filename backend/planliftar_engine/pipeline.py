@@ -5,6 +5,7 @@ import io
 import threading
 import time
 from dataclasses import dataclass, field, asdict
+from typing import Callable, Optional
 
 import numpy as np
 
@@ -121,13 +122,38 @@ def _with_cpu_fallback(fn, device, timings, key):
     return out, used
 
 
-def run_pipeline(image_bytes: bytes, options: PipelineOptions | dict | None = None) -> dict:
+ProgressCallback = Callable[[str, float], None]
+
+# Stage labels reported through progress_cb (shown verbatim by the app).
+STAGE_DECODE = "decoding image"
+STAGE_MITUNET = "segmenting walls (MitUNet)"
+STAGE_CUBICASA = "detecting rooms, doors and windows (CubiCasa)"
+STAGE_CUBICASA_POST = "post-processing CubiCasa output"
+STAGE_GEOMETRY = "building walls and rooms"
+STAGE_DONE = "done"
+
+
+def _notify(cb: Optional[ProgressCallback], stage: str, progress: float) -> None:
+    """Call progress_cb, never letting a broken callback fail the pipeline."""
+    if cb is None:
+        return
+    try:
+        cb(stage, progress)
+    except Exception:
+        pass
+
+
+def run_pipeline(image_bytes: bytes, options: PipelineOptions | dict | None = None,
+                 progress_cb: Optional[ProgressCallback] = None) -> dict:
     """Floor plan image -> PlanLiftAR schema-2.0 plan dict.
 
     Input
         image_bytes  PNG/JPEG/WebP/BMP/TIFF bytes (phone photos OK: EXIF rotation
                      is honoured). Min 64 px per side; >4096 px is downscaled.
         options      PipelineOptions or a dict of its fields (unknown keys -> InputError).
+        progress_cb  optional callable(stage: str, progress: float in 0..1), called
+                     at the start of each stage (labels: STAGE_* above) and with
+                     ("done", 1.0) on success. Exceptions it raises are ignored.
 
     Output (same schema as deliverables/livemap/floorplan.json):
         {"schema_version": "2.0",
@@ -174,12 +200,14 @@ def run_pipeline(image_bytes: bytes, options: PipelineOptions | dict | None = No
     with _run_lock:
         t0 = time.perf_counter()
         timings: dict = {}
+        _notify(progress_cb, STAGE_DECODE, 0.02)
         img, in_scale = decode_image(image_bytes, options.max_image_side)
         timings["decode"] = round(time.perf_counter() - t0, 3)
         Hf, Wf = img.shape[:2]
         device = _device(options.device)
 
         from . import mitunet
+        _notify(progress_cb, STAGE_MITUNET, 0.05)
         try:
             def _mit(dev):
                 model = mitunet.load_model(dev)
@@ -204,6 +232,7 @@ def run_pipeline(image_bytes: bytes, options: PipelineOptions | dict | None = No
         cubi_error = None
         if options.use_cubicasa:
             from . import cubicasa
+            _notify(progress_cb, STAGE_CUBICASA, 0.15)
             try:
                 def _cc(dev):
                     import torch
@@ -223,6 +252,7 @@ def run_pipeline(image_bytes: bytes, options: PipelineOptions | dict | None = No
                         timings["cubicasa_oom_downscaled_to"] = fb
                         return cubicasa.predict(model, img, dev, fb, options.cubicasa_precision)
                 pred, cubi_dev = _with_cpu_fallback(_cc, device, timings, "cubicasa_net")
+                _notify(progress_cb, STAGE_CUBICASA_POST, 0.4)
                 t = time.perf_counter()
                 sg, rf = cubicasa.postprocess(pred, (Hf, Wf))
                 del pred
@@ -234,6 +264,7 @@ def run_pipeline(image_bytes: bytes, options: PipelineOptions | dict | None = No
                 sg = rf = None
 
         from . import geometry
+        _notify(progress_cb, STAGE_GEOMETRY, 0.8 if options.use_cubicasa else 0.3)
         t = time.perf_counter()
         try:
             plan, lines, metrics = geometry.build_plan(
@@ -258,4 +289,5 @@ def run_pipeline(image_bytes: bytes, options: PipelineOptions | dict | None = No
             plan["engine"]["cubicasa_error"] = cubi_error
         if options.include_debug:
             plan["debug"] = {"log": lines, "metrics": metrics, "options": asdict(options)}
+        _notify(progress_cb, STAGE_DONE, 1.0)
         return plan
