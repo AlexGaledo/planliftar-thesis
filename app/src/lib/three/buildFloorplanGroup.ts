@@ -22,12 +22,13 @@
  */
 import * as THREE from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
-import { normalizeFixtures, type FixtureReport } from "@/lib/plan/fixtures";
+import { normalizeFixtures, type FixtureReport, type OpeningKind } from "@/lib/plan/fixtures";
 import { boundsCenter, computeBounds, planToLocal } from "@/lib/plan/geometry";
 import type { Plan } from "@/lib/plan/types";
 import { applyWallOpacity, scaleBoxUVs } from "./materials";
+import { placeKitFixture } from "./kitFixtures";
 import { DEFAULT_THEME, floorKind, ThemeMaterials, type SurfaceKind, type SurfaceTheme } from "./surfaceTheme";
-import { layoutWalls, type BoxSpec } from "./wallLayout";
+import { fixtureSlots, layoutWalls, type BoxSpec } from "./wallLayout";
 
 export interface BuildOptions {
   /** plan px per real metre (from the user's reference dimension) */
@@ -38,7 +39,7 @@ export interface BuildOptions {
   wallOpacity?: number;
   /** add room floors (viewer/GLB); AR leaves them out */
   includeRooms?: boolean;
-  /** surface kind -> material; defaults to the placeholder theme */
+  /** surface kind -> material (+ kit fixtures); defaults to DEFAULT_THEME ("home") */
   theme?: SurfaceTheme;
 }
 
@@ -135,8 +136,22 @@ export function buildFloorplanGroup(plan: Plan, opts: BuildOptions): FloorplanMo
   // Walls, openings and fixtures: boxes merged per material. Lintels, sills and
   // headers are kind "wall", so they share the wall mesh and its see-through.
   const fixtures = normalizeFixtures(plan, ppm);
-  const boxes = layoutWalls(plan.walls || [], fixtures.openings, { ppm, wallHeightM, center });
-  addByMaterial(group, mats, boxes, (b) => b.kind, boxGeometry);
+  // Kit fixtures: a model fills the opening instead of the frame/leaf/glass
+  // boxes. Only when the theme has the model loaded; otherwise the boxes stay.
+  const kitKinds = new Set<OpeningKind>((["door", "window"] as const).filter((k) => theme.fixtureModel?.(k)));
+  const boxes = layoutWalls(plan.walls || [], fixtures.openings, { ppm, wallHeightM, center, kitKinds });
+  const pieces: { kind: SurfaceKind; geometry: () => THREE.BufferGeometry }[] = boxes.map((b) => ({
+    kind: b.kind,
+    geometry: () => boxGeometry(b),
+  }));
+  if (kitKinds.size) {
+    for (const slot of fixtureSlots(fixtures.openings, { ppm, wallHeightM, center })) {
+      const model = kitKinds.has(slot.kind) ? theme.fixtureModel?.(slot.kind) : null;
+      if (!model) continue;
+      for (const p of placeKitFixture(model, slot, theme.fixtureFit)) pieces.push({ kind: p.surface, geometry: () => p.geometry });
+    }
+  }
+  addByMaterial(group, mats, pieces, (p) => p.kind, (p) => p.geometry());
   const wallMaterial = mats.get("wall");
   const wallMesh = group.children.find((c) => (c as THREE.Mesh).material === wallMaterial);
   if (wallMesh) wallMesh.name = "walls";

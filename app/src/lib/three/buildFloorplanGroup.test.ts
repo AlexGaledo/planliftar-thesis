@@ -1,9 +1,22 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import * as THREE from "three";
-import { describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { loadSample } from "@/test/samples";
 import { initialPpm, preparePlan } from "@/lib/plan";
 import { buildFloorplanGroup, disposeGroup } from "./buildFloorplanGroup";
-import { SURFACE_KINDS, THEMES, floorKind, placeholderTheme, themeByName, themeMaterialCount } from "./surfaceTheme";
+import { homeTheme, setHomeFixtures } from "./homeTheme";
+import { parseKitFixture } from "./kitFixtures";
+import {
+  DEFAULT_THEME,
+  SURFACE_KINDS,
+  THEMES,
+  floorKind,
+  placeholderTheme,
+  themeByName,
+  themeMaterialCount,
+  type SurfaceTheme,
+} from "./surfaceTheme";
 
 function meshes(group: THREE.Object3D): THREE.Mesh[] {
   const out: THREE.Mesh[] = [];
@@ -13,9 +26,10 @@ function meshes(group: THREE.Object3D): THREE.Mesh[] {
   return out;
 }
 
-const build = (name: string, includeRooms = true, wallOpacity = 1) => {
+// The P0 cases below pin the placeholder theme (box fixtures, its own names).
+const build = (name: string, includeRooms = true, wallOpacity = 1, theme: SurfaceTheme = placeholderTheme) => {
   const raw = loadSample(name);
-  return buildFloorplanGroup(preparePlan(raw), { ppm: initialPpm(raw), wallHeightM: 2.5, includeRooms, wallOpacity });
+  return buildFloorplanGroup(preparePlan(raw), { ppm: initialPpm(raw), wallHeightM: 2.5, includeRooms, wallOpacity, theme });
 };
 
 describe("surface themes", () => {
@@ -33,9 +47,12 @@ describe("surface themes", () => {
     expect(floorKind("ballroom")).toBe("floor_generic");
   });
 
-  it("themeByName falls back to the placeholder", () => {
-    expect(themeByName("nope")).toBe(placeholderTheme);
-    expect(themeByName(undefined)).toBe(placeholderTheme);
+  it("home is the default; themeByName falls back to it; placeholder stays registered", () => {
+    expect(DEFAULT_THEME).toBe(homeTheme);
+    expect(themeByName("nope")).toBe(homeTheme);
+    expect(themeByName(undefined)).toBe(homeTheme);
+    expect(themeByName("placeholder")).toBe(placeholderTheme);
+    expect(Object.keys(THEMES).sort()).toEqual(["home", "placeholder"]);
   });
 });
 
@@ -88,5 +105,39 @@ describe("buildFloorplanGroup", () => {
     }
     const door = model.group.getObjectByName("door") as THREE.Mesh;
     expect((door.material as THREE.Material).transparent).toBe(false);
+  });
+});
+
+describe("home theme with kit fixtures", () => {
+  const glb = (name: string) =>
+    new Uint8Array(readFileSync(resolve(__dirname, `../../../public/models/fixtures/${name}.glb`))).buffer;
+  beforeAll(async () => {
+    setHomeFixtures({ door: await parseKitFixture("door", glb("door")), window: await parseKitFixture("window", glb("window")) });
+  });
+  afterAll(() => setHomeFixtures({ door: undefined, window: undefined }));
+
+  it.each(["cubicasa", "newri-reference", "bungalow"])("%s: kit pieces merge into <= 9 materials, 1 alpha, no extra meshes", (name) => {
+    const model = build(name, true, 1, homeTheme);
+    const ms = meshes(model.group);
+    const mats = new Set(ms.map((m) => m.material as THREE.Material));
+    expect(mats.size).toBe(ms.length); // one mesh per material
+    expect(mats.size).toBeLessThanOrEqual(9);
+    expect([...mats].filter((m) => m.transparent).length).toBeLessThanOrEqual(1);
+    for (const m of ms) expect(m.geometry.attributes.uv).toBeDefined();
+    for (const m of mats) expect((m as THREE.MeshStandardMaterial).metalness).toBeLessThanOrEqual(0.35);
+    if (model.fixtures.openings.some((o) => o.kind === "door")) expect(ms.some((m) => m.name === "hardware")).toBe(true);
+    // Same plan, placeholder theme: the kit adds triangles, not meshes per opening.
+    const base = build(name, true, 1, placeholderTheme);
+    expect(ms.length).toBeLessThanOrEqual(meshes(base.group).length + 2);
+    disposeGroup(base.group);
+    disposeGroup(model.group);
+  });
+
+  it("cubicasa: kit frames replace the box frames, the wall cut and lintel stay", () => {
+    const model = build("cubicasa", false, 1, homeTheme);
+    const names = meshes(model.group).map((m) => m.name);
+    expect(names).toEqual(expect.arrayContaining(["walls", "trim", "door", "hardware", "glass"]));
+    expect(names).not.toContain("base_shade");
+    disposeGroup(model.group);
   });
 });

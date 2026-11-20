@@ -92,4 +92,19 @@ To use the app hosted on Vercel with the laptop server, start the server with
 `--tls --allow-origin https://<your-app>.vercel.app`, trust the certificate (step
 5), and enter `https://<lan-ip>:8443` in the app's Settings.
 
+### 3D look ("home" theme) and the bake-off harness
+
+The 3D viewer, AR and the exported GLB use the "home" theme: CC0 photo textures
+in `app/public/textures/` and CC0 door/window models in `app/public/models/`
+(credits in the `CREDITS.txt` next to them and on the How it works page). To
+re-measure it (GLB size, validator, precache, offline, first textured frame,
+wall tone, screenshots into `docs/research/bakeoff/home/`):
+
+```powershell
+cd app; pnpm bakeoff home           # builds, starts vite preview on :4173, stops it
+```
+
+The textures are regenerated from ambientCG downloads with
+`python -I app/scripts/textures/prepare_photo_textures.py <unzipped-dir> app/public/textures`.
+
 More detail: [`backend/README.md`](backend/README.md) and [`docs/API.md`](docs/API.md).

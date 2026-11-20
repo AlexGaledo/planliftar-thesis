@@ -1,6 +1,6 @@
 # Texture bake-off: decision
 
-Status: decided. Date: 2026-11-21. Branch `planliftar-mvp-pwa` (base `7a104cb`).
+Status: decided and implemented (see Outcome). Date: 2026-11-21. Branch `planliftar-mvp-pwa` (base `7a104cb`).
 Criteria: `docs/research/TEXTURES_ASSETS.md` §5. Inputs: each branch's `NOTES.md`, `metrics.json` and screenshots, plus the placeholder baseline in `placeholder/`.
 
 | Option | Branch | Commit |
@@ -189,3 +189,33 @@ Run `pnpm bakeoff home` and `pnpm lint && pnpm test && pnpm build`. Commit `docs
 | 8a | Wall tone | mean luminance of 190 or more on the `cubicasa-eye` wall patch (x 150-550, y 250-450), against 150 for photo today, with no visible 1 m grid |
 | 8b | Blind ranking | 3 or more people, 1-5 "looks like a real home", hybrid against placeholder and photo: the hybrid has the highest mean |
 | 6 | Mobile AR (reference phone, once) | at least 50 fps average over 30 s with walls filling the view. Scene Viewer opens the exported GLB. |
+
+---
+
+## Outcome
+
+Implemented on `planliftar-mvp-pwa` as the `home` theme, now `DEFAULT_THEME` for the 3D viewer, AR and GLB export (`placeholder` stays registered). Details and the full table: `home/NOTES.md`, `home/metrics.json`, screenshots in `home/` (including the `window` pose).
+
+Choices made inside the spec:
+* **W1:** Plaster001 kept (high-pass, contrast x0.5, mean `#ecebe7`, 2 m). No grid in `cubicasa-eye`, so no source swap.
+* **W4:** Tiles139 (ambientCG, CC0): 6 x 6 beige stone tiles on a 2 m set, so 33 cm tiles with grout. Checked on a 2x2 contact sheet.
+* **W2:** `lib/three/lighting.ts`: RoomEnvironment (PMREM) + hemisphere 0.9 + sun 0.7 in the viewer; hemisphere 3.2 (ground `#b0b0b0`) + sun 0.8 in AR.
+* **W5:** preload starts at idle time after the shell renders; the viewer waits (1.5 s grace) and rebuilds once if early, AR waits up to 4 s before offering Start AR, `planToGlb` always awaits.
+
+Measured (`pnpm bakeoff home`):
+
+| # | Target | Measured | |
+|---|---|---|---|
+| 2 | 0 errors / 0 warnings, <= 9 materials, <= 1 alpha, jpeg, 1 UV set | 0 / 0; 7 / 8 / 5 materials; 1 alpha; jpeg; 1 UV set | pass |
+| 4 | offline, no failures, same triangles | cubicasa and bungalow: 5/5 maps, both models, same triangles | pass |
+| 12 | CREDITS for every file, CC0 | 5 ambientCG + 2 Kenney, also on How it works > Credits | pass |
+| 1 | <= 650 / 300 / 180 KB | 591.8 / 263.3 / 143.7 KB | pass |
+| 3 | <= +200 KiB precache | +158.6 KiB (2,776,543 B) | pass |
+| 11 | build <= 60 ms | <= 25 ms | pass |
+| 11 | first textured frame < 300 ms (median of 5, warm SW, hardware GPU) | 59 / 89 / 67 ms (RTX 3050 Laptop, D3D11); SwiftShader 1.4 s, recorded only | pass |
+| 5 | draw calls <= baseline + 2 | 7 / 8 / 5, equal to placeholder | pass |
+| 7 | <= 8 MB GPU textures | 4.9 / 6.3 / 4.9 MB | pass |
+| 9 | 0 fit defects | none seen in close-up and window shots | pass (by eye) |
+| 8a | wall luminance >= 190 | 211.8 on `cubicasa-eye` (photo: 150) | pass |
+| 8b | 3-person blind ranking | not run | open |
+| 6 | phone AR >= 50 fps, Scene Viewer opens GLB | not run (needs the reference phone) | open |

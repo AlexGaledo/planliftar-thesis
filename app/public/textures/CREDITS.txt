@@ -1,0 +1,26 @@
+PlanLiftAR "home" surface theme textures
+========================================
+
+All textures in this folder come from ambientCG (https://ambientcg.com) and are
+licensed CC0 1.0 Universal (public domain dedication):
+https://docs.ambientcg.com/license/  https://creativecommons.org/publicdomain/zero/1.0/
+Attribution is not required; it is given here anyway (thesis hygiene).
+
+Source: the 1K-JPG download of each asset (colour map only), fetched
+2026-11-21, resized to a 512 px longest side and re-encoded as JPEG q80 by
+app/scripts/textures/prepare_photo_textures.py.
+
+File                  ambientCG asset     Real-world size   Used for
+--------------------  ------------------  ----------------  ---------------------------------------
+plaster_color.jpg     Plaster001          2 m (assumed)     walls, lintels, sills, headers
+                                                            (high-passed, contrast halved, mean
+                                                            moved to #ecebe7 to remove the 1 m grid)
+door_color.jpg        Wood049             0.8 m (rotated)   door leaves (grain turned vertical)
+wood_color.jpg        WoodFloor051        1.8 m             floors: bedroom, living, room, entry, unknown
+tile_color.jpg        Tiles139            2.0 m (33 cm      floors: kitchen, bathroom
+                                          tiles, 6 x 6)
+concrete_color.jpg    Concrete034         1.1 x 0.55 m      floors: garage, storage; slab
+
+Asset pages: https://ambientcg.com/a/<asset id>
+
+The door and window models are credited in ../models/CREDITS.txt (Kenney, CC0).

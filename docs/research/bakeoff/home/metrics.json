@@ -1,0 +1,675 @@
+{
+  "theme": "home",
+  "generatedAt": "2026-11-20T21:17:21.235Z",
+  "commit": "8bfe666",
+  "wallHeightM": 2.5,
+  "viewport": {
+    "width": 1280,
+    "height": 800,
+    "dpr": 1,
+    "renderer": "headless Chrome, SwiftShader"
+  },
+  "precache": {
+    "entries": 62,
+    "bytes": 2776543,
+    "kib": 2711.5,
+    "workboxLine": {
+      "entries": 62,
+      "kib": 2706.64
+    }
+  },
+  "plans": {
+    "cubicasa": {
+      "gltf": {
+        "glbBytes": 591812,
+        "materials": 7,
+        "materialNames": [
+          "wall",
+          "trim",
+          "door",
+          "hardware",
+          "glass",
+          "slab",
+          "floor_wood"
+        ],
+        "alphaMaterials": 1,
+        "metallicMaterials": 1,
+        "extensionsUsed": [
+          "KHR_texture_transform"
+        ],
+        "meshes": 7,
+        "primitives": 7,
+        "triangles": 7063,
+        "uvSets": 1,
+        "vertexColors": false,
+        "textures": 4,
+        "images": [
+          {
+            "mimeType": "image/jpeg",
+            "bytes": 10104,
+            "h": 512,
+            "w": 512
+          },
+          {
+            "mimeType": "image/jpeg",
+            "bytes": 43368,
+            "h": 512,
+            "w": 512
+          },
+          {
+            "mimeType": "image/jpeg",
+            "bytes": 14344,
+            "h": 256,
+            "w": 512
+          },
+          {
+            "mimeType": "image/jpeg",
+            "bytes": 40876,
+            "h": 512,
+            "w": 512
+          }
+        ],
+        "textureBytesGlb": 108692,
+        "maxTextureDim": 512
+      },
+      "validator": {
+        "validatorVersion": "2.0.0-dev.3.10",
+        "errors": 0,
+        "warnings": 0,
+        "infos": 3,
+        "hints": 0,
+        "messages": []
+      },
+      "sceneViewer": {
+        "pass": true,
+        "problems": []
+      },
+      "render": {
+        "theme": "home",
+        "plan": "cubicasa",
+        "ppm": 100,
+        "wallHeightM": 2.5,
+        "buildMs": 20.3,
+        "firstFrameMs": 953.4,
+        "preloadMs": 23,
+        "envMs": 47.2,
+        "renderMs": 932.9,
+        "firstTexturedFrameMs": 976.4,
+        "lights": "viewer",
+        "gpu": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+        "themeStats": {
+          "preloadMs": 23,
+          "maps": 5,
+          "mapsLoaded": 5,
+          "mapsFailed": [],
+          "fixtureFit": "slice",
+          "fixtureTriangles": {
+            "door": 188,
+            "window": 84
+          },
+          "fixturesFailed": []
+        },
+        "drawCalls": 7,
+        "triangles": 7063,
+        "textures": 4,
+        "textureGpuBytes": 4881121,
+        "openings": [
+          {
+            "id": "door_001",
+            "kind": "door"
+          },
+          {
+            "id": "window_001+window_002",
+            "kind": "window"
+          },
+          {
+            "id": "window_003+window_004",
+            "kind": "window"
+          },
+          {
+            "id": "door_002",
+            "kind": "door"
+          },
+          {
+            "id": "window_005",
+            "kind": "window"
+          },
+          {
+            "id": "door_003+door_004",
+            "kind": "door"
+          },
+          {
+            "id": "door_005+door_006",
+            "kind": "door"
+          },
+          {
+            "id": "window_006",
+            "kind": "window"
+          },
+          {
+            "id": "window_007",
+            "kind": "window"
+          },
+          {
+            "id": "window_008",
+            "kind": "window"
+          },
+          {
+            "id": "door_007+door_008",
+            "kind": "door"
+          }
+        ],
+        "droppedFixtures": []
+      },
+      "wallLuminance": {
+        "patch": [
+          150,
+          250,
+          550,
+          450
+        ],
+        "pose": "eye",
+        "mean": 211.8
+      },
+      "screenshots": [
+        "cubicasa-aerial.png",
+        "cubicasa-eye.png",
+        "cubicasa-closeup.png",
+        "cubicasa-window.png"
+      ],
+      "pageErrors": []
+    },
+    "newri-reference": {
+      "gltf": {
+        "glbBytes": 263300,
+        "materials": 8,
+        "materialNames": [
+          "wall",
+          "trim",
+          "door",
+          "hardware",
+          "glass",
+          "slab",
+          "floor_tile",
+          "floor_wood"
+        ],
+        "alphaMaterials": 1,
+        "metallicMaterials": 1,
+        "extensionsUsed": [
+          "KHR_texture_transform"
+        ],
+        "meshes": 8,
+        "primitives": 8,
+        "triangles": 1738,
+        "uvSets": 1,
+        "vertexColors": false,
+        "textures": 5,
+        "images": [
+          {
+            "mimeType": "image/jpeg",
+            "bytes": 10104,
+            "h": 512,
+            "w": 512
+          },
+          {
+            "mimeType": "image/jpeg",
+            "bytes": 43368,
+            "h": 512,
+            "w": 512
+          },
+          {
+            "mimeType": "image/jpeg",
+            "bytes": 14344,
+            "h": 256,
+            "w": 512
+          },
+          {
+            "mimeType": "image/jpeg",
+            "bytes": 44116,
+            "h": 512,
+            "w": 512
+          },
+          {
+            "mimeType": "image/jpeg",
+            "bytes": 40876,
+            "h": 512,
+            "w": 512
+          }
+        ],
+        "textureBytesGlb": 152808,
+        "maxTextureDim": 512
+      },
+      "validator": {
+        "validatorVersion": "2.0.0-dev.3.10",
+        "errors": 0,
+        "warnings": 0,
+        "infos": 3,
+        "hints": 0,
+        "messages": []
+      },
+      "sceneViewer": {
+        "pass": true,
+        "problems": []
+      },
+      "render": {
+        "theme": "home",
+        "plan": "newri-reference",
+        "ppm": 100,
+        "wallHeightM": 2.5,
+        "buildMs": 8,
+        "firstFrameMs": 1359.1,
+        "preloadMs": 25.2,
+        "envMs": 190.7,
+        "renderMs": 1350.9,
+        "firstTexturedFrameMs": 1384.3,
+        "lights": "viewer",
+        "gpu": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+        "themeStats": {
+          "preloadMs": 25.2,
+          "maps": 5,
+          "mapsLoaded": 5,
+          "mapsFailed": [],
+          "fixtureFit": "slice",
+          "fixtureTriangles": {
+            "door": 188,
+            "window": 84
+          },
+          "fixturesFailed": []
+        },
+        "drawCalls": 8,
+        "triangles": 1738,
+        "textures": 5,
+        "textureGpuBytes": 6275727,
+        "openings": [
+          {
+            "id": "door_001+door_002+door_003",
+            "kind": "door"
+          },
+          {
+            "id": "door_004",
+            "kind": "door"
+          },
+          {
+            "id": "window_001",
+            "kind": "window"
+          },
+          {
+            "id": "window_002",
+            "kind": "window"
+          },
+          {
+            "id": "door_005",
+            "kind": "door"
+          }
+        ],
+        "droppedFixtures": [
+          {
+            "id": "door_006+door_007",
+            "reason": "narrower than 0.3 m after merging"
+          }
+        ]
+      },
+      "wallLuminance": {
+        "patch": [
+          150,
+          250,
+          550,
+          450
+        ],
+        "pose": "eye",
+        "mean": 200.1
+      },
+      "screenshots": [
+        "newri-reference-aerial.png",
+        "newri-reference-eye.png",
+        "newri-reference-closeup.png",
+        "newri-reference-window.png"
+      ],
+      "pageErrors": []
+    },
+    "bungalow": {
+      "gltf": {
+        "glbBytes": 143660,
+        "materials": 5,
+        "materialNames": [
+          "wall",
+          "trim",
+          "slab",
+          "floor_wood",
+          "floor_tile"
+        ],
+        "alphaMaterials": 0,
+        "metallicMaterials": 0,
+        "extensionsUsed": [
+          "KHR_texture_transform"
+        ],
+        "meshes": 5,
+        "primitives": 5,
+        "triangles": 382,
+        "uvSets": 1,
+        "vertexColors": false,
+        "textures": 4,
+        "images": [
+          {
+            "mimeType": "image/jpeg",
+            "bytes": 10104,
+            "h": 512,
+            "w": 512
+          },
+          {
+            "mimeType": "image/jpeg",
+            "bytes": 14344,
+            "h": 256,
+            "w": 512
+          },
+          {
+            "mimeType": "image/jpeg",
+            "bytes": 40876,
+            "h": 512,
+            "w": 512
+          },
+          {
+            "mimeType": "image/jpeg",
+            "bytes": 44116,
+            "h": 512,
+            "w": 512
+          }
+        ],
+        "textureBytesGlb": 109440,
+        "maxTextureDim": 512
+      },
+      "validator": {
+        "validatorVersion": "2.0.0-dev.3.10",
+        "errors": 0,
+        "warnings": 0,
+        "infos": 1,
+        "hints": 0,
+        "messages": []
+      },
+      "sceneViewer": {
+        "pass": true,
+        "problems": []
+      },
+      "render": {
+        "theme": "home",
+        "plan": "bungalow",
+        "ppm": 100,
+        "wallHeightM": 2.5,
+        "buildMs": 3.4,
+        "firstFrameMs": 1342.4,
+        "preloadMs": 33.9,
+        "envMs": 178.6,
+        "renderMs": 1338.8,
+        "firstTexturedFrameMs": 1376.3,
+        "lights": "viewer",
+        "gpu": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+        "themeStats": {
+          "preloadMs": 33.9,
+          "maps": 5,
+          "mapsLoaded": 5,
+          "mapsFailed": [],
+          "fixtureFit": "slice",
+          "fixtureTriangles": {
+            "door": 188,
+            "window": 84
+          },
+          "fixturesFailed": []
+        },
+        "drawCalls": 5,
+        "triangles": 382,
+        "textures": 4,
+        "textureGpuBytes": 4881121,
+        "openings": [],
+        "droppedFixtures": []
+      },
+      "wallLuminance": {
+        "patch": [
+          150,
+          250,
+          550,
+          450
+        ],
+        "pose": "eye",
+        "mean": 231.4
+      },
+      "screenshots": [
+        "bungalow-aerial.png",
+        "bungalow-eye.png"
+      ],
+      "pageErrors": []
+    }
+  },
+  "offline": {
+    "cachedAssets": [
+      "/models/fixtures/door.glb",
+      "/models/fixtures/window.glb",
+      "/textures/concrete_color.jpg",
+      "/textures/door_color.jpg",
+      "/textures/plaster_color.jpg",
+      "/textures/tile_color.jpg",
+      "/textures/wood_color.jpg"
+    ],
+    "plans": {
+      "cubicasa": {
+        "mapsLoaded": 5,
+        "mapsFailed": [],
+        "fixturesFailed": [],
+        "triangles": 7063,
+        "sameTrianglesAsOnline": true
+      },
+      "bungalow": {
+        "mapsLoaded": 5,
+        "mapsFailed": [],
+        "fixturesFailed": [],
+        "triangles": 382,
+        "sameTrianglesAsOnline": true
+      }
+    }
+  },
+  "timing": {
+    "swiftshader": {
+      "label": "swiftshader",
+      "plans": {
+        "cubicasa": {
+          "medianFirstTexturedFrameMs": 1483.3,
+          "medianPreloadMs": 21.9,
+          "medianBuildMs": 22,
+          "runs": [
+            {
+              "firstTexturedFrameMs": 1495.5,
+              "preloadMs": 1312.8,
+              "buildMs": 15.7
+            },
+            {
+              "firstTexturedFrameMs": 1467.9,
+              "preloadMs": 36.4,
+              "buildMs": 20.8
+            },
+            {
+              "firstTexturedFrameMs": 1505.5,
+              "preloadMs": 18.3,
+              "buildMs": 24.4
+            },
+            {
+              "firstTexturedFrameMs": 1447.6,
+              "preloadMs": 21.9,
+              "buildMs": 22
+            },
+            {
+              "firstTexturedFrameMs": 1483.3,
+              "preloadMs": 17.5,
+              "buildMs": 22.6
+            }
+          ]
+        },
+        "newri-reference": {
+          "medianFirstTexturedFrameMs": 1442.4,
+          "medianPreloadMs": 23.2,
+          "medianBuildMs": 7.4,
+          "runs": [
+            {
+              "firstTexturedFrameMs": 1507.5,
+              "preloadMs": 24.7,
+              "buildMs": 8.1
+            },
+            {
+              "firstTexturedFrameMs": 1589.6,
+              "preloadMs": 18.5,
+              "buildMs": 6.7
+            },
+            {
+              "firstTexturedFrameMs": 1439.3,
+              "preloadMs": 23.2,
+              "buildMs": 7.4
+            },
+            {
+              "firstTexturedFrameMs": 1386.8,
+              "preloadMs": 31.7,
+              "buildMs": 10.8
+            },
+            {
+              "firstTexturedFrameMs": 1442.4,
+              "preloadMs": 19.1,
+              "buildMs": 7
+            }
+          ]
+        },
+        "bungalow": {
+          "medianFirstTexturedFrameMs": 1404.5,
+          "medianPreloadMs": 23.8,
+          "medianBuildMs": 2.5,
+          "runs": [
+            {
+              "firstTexturedFrameMs": 1382,
+              "preloadMs": 27.3,
+              "buildMs": 2.6
+            },
+            {
+              "firstTexturedFrameMs": 1446.9,
+              "preloadMs": 19.2,
+              "buildMs": 2.4
+            },
+            {
+              "firstTexturedFrameMs": 1400.2,
+              "preloadMs": 18,
+              "buildMs": 2.5
+            },
+            {
+              "firstTexturedFrameMs": 1486.7,
+              "preloadMs": 23.8,
+              "buildMs": 2.7
+            },
+            {
+              "firstTexturedFrameMs": 1404.5,
+              "preloadMs": 28.6,
+              "buildMs": 2.4
+            }
+          ]
+        }
+      },
+      "gpu": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)"
+    },
+    "defaultGpu": {
+      "label": "default-gpu",
+      "plans": {
+        "cubicasa": {
+          "medianFirstTexturedFrameMs": 59.1,
+          "medianPreloadMs": 8.9,
+          "medianBuildMs": 11.6,
+          "runs": [
+            {
+              "firstTexturedFrameMs": 296.7,
+              "preloadMs": 13,
+              "buildMs": 16.2
+            },
+            {
+              "firstTexturedFrameMs": 59.1,
+              "preloadMs": 10.5,
+              "buildMs": 11.2
+            },
+            {
+              "firstTexturedFrameMs": 57.8,
+              "preloadMs": 8,
+              "buildMs": 11.6
+            },
+            {
+              "firstTexturedFrameMs": 60.7,
+              "preloadMs": 8.4,
+              "buildMs": 12.3
+            },
+            {
+              "firstTexturedFrameMs": 57,
+              "preloadMs": 8.9,
+              "buildMs": 10.5
+            }
+          ]
+        },
+        "newri-reference": {
+          "medianFirstTexturedFrameMs": 89,
+          "medianPreloadMs": 16.7,
+          "medianBuildMs": 7,
+          "runs": [
+            {
+              "firstTexturedFrameMs": 76.3,
+              "preloadMs": 9.2,
+              "buildMs": 4.6
+            },
+            {
+              "firstTexturedFrameMs": 95.8,
+              "preloadMs": 22,
+              "buildMs": 7.1
+            },
+            {
+              "firstTexturedFrameMs": 94,
+              "preloadMs": 21.6,
+              "buildMs": 7
+            },
+            {
+              "firstTexturedFrameMs": 89,
+              "preloadMs": 16.7,
+              "buildMs": 6.9
+            },
+            {
+              "firstTexturedFrameMs": 78.6,
+              "preloadMs": 16.3,
+              "buildMs": 7.1
+            }
+          ]
+        },
+        "bungalow": {
+          "medianFirstTexturedFrameMs": 66.5,
+          "medianPreloadMs": 19,
+          "medianBuildMs": 2.4,
+          "runs": [
+            {
+              "firstTexturedFrameMs": 63,
+              "preloadMs": 20.8,
+              "buildMs": 2.2
+            },
+            {
+              "firstTexturedFrameMs": 66.5,
+              "preloadMs": 16.4,
+              "buildMs": 3.5
+            },
+            {
+              "firstTexturedFrameMs": 59,
+              "preloadMs": 11,
+              "buildMs": 2.4
+            },
+            {
+              "firstTexturedFrameMs": 66.7,
+              "preloadMs": 19,
+              "buildMs": 2.2
+            },
+            {
+              "firstTexturedFrameMs": 73.1,
+              "preloadMs": 23.4,
+              "buildMs": 2.4
+            }
+          ]
+        }
+      },
+      "gpu": "ANGLE (NVIDIA, NVIDIA GeForce RTX 3050 Laptop GPU (0x000025A2) Direct3D11 vs_5_0 ps_5_0, D3D11)"
+    }
+  }
+}

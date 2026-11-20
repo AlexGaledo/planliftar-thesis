@@ -127,7 +127,8 @@ demo. It works in dev and in the deployed build, with no backend.
 ## 6. Offline strategy
 
 - vite-plugin-pwa (Workbox `generateSW`), `registerType: "prompt"`.
-- Precache: app shell (HTML, JS, CSS, fonts, icons) and `/samples/*.json`.
+- Precache: app shell (HTML, JS, CSS, fonts, icons), `/samples/*.json`, and the 3D
+  theme's assets (`/textures/*.jpg`, `/models/fixtures/*.glb`, about +157 KiB).
 - Navigation fallback to `index.html`, except `/api/*` and `/ws`.
 - `/api/*` is never cached (network only): job results are saved into IndexedDB as
   projects, which is the offline copy.
@@ -136,6 +137,29 @@ demo. It works in dev and in the deployed build, with no backend.
 - Update flow: a new service worker waits; a toast offers "Reload to update".
 - Install: `beforeinstallprompt` is captured and shown as an install banner on the
   library page; iOS gets an "Add to Home Screen" hint instead.
+
+### 6.1 3D surfaces: the "home" theme
+
+The viewer, AR and GLB export (Scene Viewer, model-viewer) all build the model
+with `DEFAULT_THEME = homeTheme` (`app/src/lib/three/homeTheme.ts`), the texture
+bake-off winner (`docs/research/bakeoff/DECISION.md`):
+
+- 5 CC0 ambientCG colour maps (512 px JPEG): off-white plaster walls, oak floors
+  (dry rooms), 33 cm stone tile (kitchen, bathroom), concrete (garage, storage,
+  slab), a wood door veneer. Trim is flat paint; no roughness/normal maps.
+- CC0 Kenney door (with lever handle) and window models, 9-slice fitted into
+  each opening (`kitFixtures.ts`) and merged per material.
+- At most 9 materials, 1 alpha (glass); one mesh per material.
+- Assets load asynchronously. `preloadTheme()` starts at idle time after the
+  shell renders (`main.tsx`); the viewer, the AR controller and `planToGlb`
+  await it before their first build. It never rejects: on failure the build
+  uses flat colours and box fixtures, and the viewer rebuilds once if it had to
+  build before the assets arrived.
+- Viewer lighting is a RoomEnvironment (PMREM) plus a soft hemisphere and sun;
+  AR uses a brighter hemisphere instead (`lib/three/lighting.ts`).
+- Credits: `public/textures/CREDITS.txt`, `public/models/CREDITS.txt`, and
+  How it works > Credits. `?theme=placeholder` on `/bakeoff` keeps the old look
+  for comparison.
 
 ---
 

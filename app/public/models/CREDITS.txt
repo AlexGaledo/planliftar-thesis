@@ -1,0 +1,18 @@
+Third-party 3D models in app/public/models/ (texture bake-off Option 3, "Kit Fixtures")
+
+fixtures/door.glb
+  Source: Kenney "Furniture Kit" 2.0 (2018-10-20), file Models/GLTF format/doorway.glb
+          https://kenney.nl/assets/furniture-kit
+  Licence: Creative Commons Zero (CC0 1.0), per the pack's License.txt
+          http://creativecommons.org/publicdomain/zero/1.0/
+  Changes: normalised to a 1 x 1 x 1 unit box (pivot bottom centre), split into
+           "frame" and "leaf" nodes, materials renamed to the app's surface kinds,
+           UVs and KHR_materials_unlit removed (scripts/models/normalize_fixtures.mjs).
+
+fixtures/window.glb
+  Source: Kenney "Furniture Kit" 2.0, file Models/GLTF format/wallWindow.glb
+  Licence: CC0 1.0, as above.
+  Changes: as above; the wall panel, its back face and the wall top/bottom caps
+           were removed, keeping only the casing, sash and glass.
+
+Credit (not required by CC0): Kenney, www.kenney.nl

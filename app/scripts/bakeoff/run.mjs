@@ -13,7 +13,13 @@
  *  4. exports the GLB in the page and inspects it: size, materials, alpha
  *     materials, extensions, UV sets, vertex colours, texture bytes and
  *     dimensions, plus the Khronos glTF Validator (metrics 1, 2, 7),
- *  5. writes docs/research/bakeoff/<theme>/metrics.json and the PNGs.
+ *  5. measures the mean wall luminance of the eye-level shot (metric 8a),
+ *  6. with the service worker allowed: installs it, then (a) reloads each plan
+ *     5 times and takes the median first textured frame (metric 11, warm SW),
+ *     once in SwiftShader and once with the default (hardware) GPU, and
+ *     (b) goes offline and checks cubicasa and bungalow still load every map
+ *     and fixture model with the same triangles (metric 4),
+ *  7. writes docs/research/bakeoff/<theme>/metrics.json and the PNGs.
  *
  * Not part of `pnpm e2e` (that suite lives in e2e/ and targets the backend).
  * Uses playwright-core with the locally installed Chrome; set CHROME_PATH if it
@@ -30,7 +36,7 @@ import { validateBytes } from "gltf-validator";
 const APP = resolve(fileURLToPath(import.meta.url), "../../..");
 const REPO = resolve(APP, "..");
 const args = process.argv.slice(2);
-const THEME = args.find((a) => !a.startsWith("--")) ?? process.env.BAKEOFF_THEME ?? "placeholder";
+const THEME = args.find((a) => !a.startsWith("--")) ?? process.env.BAKEOFF_THEME ?? "home";
 const SKIP_BUILD = args.includes("--skip-build");
 const PORT = 4173;
 const BASE = `http://127.0.0.1:${PORT}`;
@@ -39,6 +45,93 @@ const OUT = join(REPO, "docs", "research", "bakeoff", THEME);
 const CHROME = process.env.CHROME_PATH ?? "C:/Program Files/Google/Chrome/Application/chrome.exe";
 
 const log = (...m) => console.log("[bakeoff]", ...m);
+/** The cubicasa-eye wall patch from DECISION.md (metric 8a). */
+const WALL_PATCH = [150, 250, 550, 450];
+const TIMING_RUNS = 5;
+const OFFLINE_PLANS = ["cubicasa", "bungalow"];
+const median = (xs) => {
+  const s = [...xs].sort((a, b) => a - b);
+  return s.length ? (s.length % 2 ? s[(s.length - 1) / 2] : (s[s.length / 2 - 1] + s[s.length / 2]) / 2) : null;
+};
+
+/** Open the bakeoff page and wait until it is ready; returns its stats. */
+async function openBakeoff(page, plan) {
+  await page.goto(`${BASE}/bakeoff?plan=${plan}&theme=${encodeURIComponent(THEME)}`, { waitUntil: "load" });
+  await page.waitForFunction(() => window.__bakeoff && (window.__bakeoff.ready || window.__bakeoff.error), null, { timeout: 60_000 });
+  const err = await page.evaluate(() => window.__bakeoff.error ?? null);
+  if (err) throw new Error(`${plan}: ${err}`);
+  return page.evaluate(() => window.__bakeoff.stats());
+}
+
+/** A context with the service worker installed and controlling the page. */
+async function swContext(browser) {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 860 }, deviceScaleFactor: 1 });
+  const page = await context.newPage();
+  await page.goto(`${BASE}/`, { waitUntil: "load" });
+  await page.evaluate(async () => {
+    const reg = await navigator.serviceWorker.ready;
+    // wait for the install (precache) to finish
+    if (!reg.active || reg.installing || reg.waiting) await new Promise((r) => setTimeout(r, 2000));
+  });
+  await page.reload({ waitUntil: "load" });
+  await page.waitForFunction(() => !!navigator.serviceWorker.controller, null, { timeout: 30_000 });
+  const cached = await page.evaluate(async () => {
+    const urls = [];
+    for (const name of await caches.keys()) for (const req of await (await caches.open(name)).keys()) urls.push(new URL(req.url).pathname);
+    return urls.filter((u) => u.startsWith("/textures/") || u.startsWith("/models/"));
+  });
+  return { context, page, cached };
+}
+
+/** Median first textured frame over TIMING_RUNS warm-SW reloads, per plan. */
+async function timing(browser, label) {
+  const { context, page } = await swContext(browser);
+  const out = { label, plans: {} };
+  try {
+    for (const plan of PLANS) {
+      const runs = [];
+      for (let i = 0; i < TIMING_RUNS; i++) {
+        const s = await openBakeoff(page, plan);
+        runs.push({ firstTexturedFrameMs: s.firstTexturedFrameMs, preloadMs: s.preloadMs, buildMs: s.buildMs });
+        out.gpu = s.gpu;
+      }
+      out.plans[plan] = {
+        medianFirstTexturedFrameMs: median(runs.map((r) => r.firstTexturedFrameMs)),
+        medianPreloadMs: median(runs.map((r) => r.preloadMs)),
+        medianBuildMs: median(runs.map((r) => r.buildMs)),
+        runs,
+      };
+      log(`timing ${label} ${plan}: median first textured frame ${out.plans[plan].medianFirstTexturedFrameMs} ms (${out.gpu})`);
+    }
+  } finally {
+    await context.close();
+  }
+  return out;
+}
+
+/** Metric 4: SW installed, network off, the theme still loads everything. */
+async function offline(browser, onlineTriangles) {
+  const { context, page, cached } = await swContext(browser);
+  const out = { cachedAssets: cached.sort(), plans: {} };
+  try {
+    await context.setOffline(true);
+    for (const plan of OFFLINE_PLANS) {
+      const s = await openBakeoff(page, plan);
+      const ts = s.themeStats ?? {};
+      out.plans[plan] = {
+        mapsLoaded: ts.mapsLoaded ?? null,
+        mapsFailed: ts.mapsFailed ?? [],
+        fixturesFailed: ts.fixturesFailed ?? [],
+        triangles: s.triangles,
+        sameTrianglesAsOnline: s.triangles === onlineTriangles[plan],
+      };
+      log(`offline ${plan}: ${JSON.stringify(out.plans[plan])}`);
+    }
+  } finally {
+    await context.close();
+  }
+  return out;
+}
 
 // ---------------------------------------------------------------------------
 // Build + precache
@@ -248,17 +341,16 @@ async function main() {
       const page = await context.newPage();
       const errors = [];
       page.on("pageerror", (e) => errors.push(e.message));
-      await page.goto(`${BASE}/bakeoff?plan=${plan}&theme=${encodeURIComponent(THEME)}`, { waitUntil: "load" });
-      await page.waitForFunction(() => window.__bakeoff && (window.__bakeoff.ready || window.__bakeoff.error), null, { timeout: 60_000 });
-      const err = await page.evaluate(() => window.__bakeoff.error ?? null);
-      if (err) throw new Error(`${plan}: ${err}`);
+      await openBakeoff(page, plan);
 
       const canvas = page.locator("#bakeoff-canvas");
       const screenshots = [];
+      let wallLuminance = null;
       const poses = await page.evaluate(() => [...window.__bakeoff.poses]);
       for (const pose of poses) {
         const ok = await page.evaluate((p) => window.__bakeoff.setPose(p), pose);
         if (!ok) continue;
+        if (pose === "eye") wallLuminance = await page.evaluate((r) => window.__bakeoff.luminance(...r), WALL_PATCH);
         const file = `${plan}-${pose}.png`;
         await canvas.screenshot({ path: join(OUT, file) });
         screenshots.push(file);
@@ -274,11 +366,22 @@ async function main() {
         validator,
         sceneViewer: sceneViewerGate(gltf, validator),
         render,
+        wallLuminance: { patch: WALL_PATCH, pose: "eye", mean: wallLuminance },
         screenshots,
         pageErrors: errors,
       };
       log(`${plan}: ${gltf.glbBytes} B, ${gltf.materials} materials, ${validator.errors} validator errors`);
       await context.close();
+    }
+    const onlineTriangles = Object.fromEntries(Object.entries(metrics.plans).map(([k, v]) => [k, v.render.triangles]));
+    metrics.offline = await offline(browser, onlineTriangles);
+    metrics.timing = { swiftshader: await timing(browser, "swiftshader") };
+    // Default GPU (hardware where headless Chrome gets one); recorded, gated by DECISION.md §4.4.
+    const hw = await chromium.launch({ executablePath: CHROME, headless: true });
+    try {
+      metrics.timing.defaultGpu = await timing(hw, "default-gpu");
+    } finally {
+      await hw.close();
     }
   } finally {
     await browser.close();

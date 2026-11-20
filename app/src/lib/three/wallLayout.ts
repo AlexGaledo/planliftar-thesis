@@ -17,7 +17,7 @@
  * onto the wall direction, exactly like the original single-box walls.
  */
 import { planToLocal } from "@/lib/plan/geometry";
-import { collinearWalls, type Opening } from "@/lib/plan/fixtures";
+import { collinearWalls, type Opening, type OpeningKind } from "@/lib/plan/fixtures";
 import type { PlanPoint, Wall } from "@/lib/plan/types";
 import type { SurfaceKind } from "./surfaceTheme";
 
@@ -53,6 +53,27 @@ export interface LayoutOptions {
   wallHeightM: number;
   /** footprint centre in plan px (the model origin) */
   center: PlanPoint;
+  /**
+   * Opening kinds whose frame/leaf/glass boxes are left out because a kit model
+   * fills them instead; the wall cut, lintel, sill and header stay.
+   * See fixtureSlots() for where the model goes.
+   */
+  kitKinds?: ReadonlySet<OpeningKind>;
+}
+
+/** The hole a kit fixture fills: centre of its base, size in metres, wall yaw. */
+export interface FixtureSlot {
+  kind: OpeningKind;
+  openingId: string;
+  /** bottom centre, local metres */
+  x: number;
+  y: number;
+  z: number;
+  width: number;
+  height: number;
+  /** host wall thickness (metres) */
+  thickness: number;
+  yaw: number;
 }
 
 interface Piece {
@@ -107,7 +128,7 @@ export function cutOpening(pieces: Piece[], o: Opening, minPx: number): Piece[] 
 
 /** Lay out all wall, opening and fixture boxes for a plan. */
 export function layoutWalls(walls: Wall[], openings: Opening[], opts: LayoutOptions): BoxSpec[] {
-  const { ppm, wallHeightM: H, center } = opts;
+  const { ppm, wallHeightM: H, center, kitKinds } = opts;
   const boxes: BoxSpec[] = [];
   const thick = (px: number) => Math.max(MIN_WALL_THICKNESS_M, px / ppm);
 
@@ -135,8 +156,7 @@ export function layoutWalls(walls: Wall[], openings: Opening[], opts: LayoutOpti
   const skirting = (a: PlanPoint, b: PlanPoint, t: number) =>
     run("skirting", a, b, t + 2 * SKIRTING_PROUD_M, 0, Math.min(SKIRTING_HEIGHT_M, H));
 
-  // Windows need room for a sill below and some glass above it.
-  const usable = openings.filter((o) => o.kind === "door" || H > SILL_HEIGHT_M + 0.2);
+  const usable = usableOpenings(openings, H);
 
   let pieces: Piece[] = dedupeWalls(walls).map((w) => ({ a: w.start, b: w.end, t: w.thickness || 4 }));
   const minPx = Math.max(0.5, 0.02 * ppm);
@@ -161,7 +181,7 @@ export function layoutWalls(walls: Wall[], openings: Opening[], opts: LayoutOpti
       const top = Math.min(DOOR_HEIGHT_M, H);
       run("wall", a, b, t, top, H); // lintel
       const frameDepth = t + 0.01;
-      if (widthM > 2 * FRAME_M + 0.1) {
+      if (widthM > 2 * FRAME_M + 0.1 && !kitKinds?.has("door")) {
         run("window_frame", ...inner(o.s0, o.s0 + f), frameDepth, 0, top);
         run("window_frame", ...inner(o.s1 - f, o.s1), frameDepth, 0, top);
         run("window_frame", ...inner(o.s0 + f, o.s1 - f), frameDepth, top - FRAME_M, top);
@@ -173,7 +193,7 @@ export function layoutWalls(walls: Wall[], openings: Opening[], opts: LayoutOpti
       skirting(a, b, t);
       run("wall", a, b, t, head, H); // header
       const depth = Math.min(WINDOW_FRAME_DEPTH_M, t);
-      if (widthM > 2 * FRAME_M + 0.05 && head - SILL_HEIGHT_M > 2 * FRAME_M + 0.05) {
+      if (widthM > 2 * FRAME_M + 0.05 && head - SILL_HEIGHT_M > 2 * FRAME_M + 0.05 && !kitKinds?.has("window")) {
         run("window_frame", ...inner(o.s0, o.s0 + f), depth, SILL_HEIGHT_M, head);
         run("window_frame", ...inner(o.s1 - f, o.s1), depth, SILL_HEIGHT_M, head);
         run("window_frame", ...inner(o.s0 + f, o.s1 - f), depth, SILL_HEIGHT_M, SILL_HEIGHT_M + FRAME_M);
@@ -183,4 +203,36 @@ export function layoutWalls(walls: Wall[], openings: Opening[], opts: LayoutOpti
     }
   }
   return boxes;
+}
+
+/** Windows need room for a sill below and some glass above it. */
+function usableOpenings(openings: Opening[], H: number): Opening[] {
+  return openings.filter((o) => o.kind === "door" || H > SILL_HEIGHT_M + 0.2);
+}
+
+/**
+ * Where kit fixtures go: one slot per usable opening, the full hole between
+ * the wall cut ends, from the floor (door) or sill (window) to the lintel or
+ * header. Same size gates as the box fixtures in layoutWalls().
+ */
+export function fixtureSlots(openings: Opening[], opts: Omit<LayoutOptions, "kitKinds">): FixtureSlot[] {
+  const { ppm, wallHeightM: H, center } = opts;
+  const slots: FixtureSlot[] = [];
+  for (const o of usableOpenings(openings, H)) {
+    const s = (o.s0 + o.s1) / 2;
+    const c = planToLocal(o.origin.x + o.dir.x * s, o.origin.y + o.dir.y * s, center, ppm);
+    const width = (o.s1 - o.s0) / ppm;
+    const thickness = Math.max(MIN_WALL_THICKNESS_M, o.thicknessPx / ppm);
+    // Plan +Y is local -Z, so the plan direction (dx, dy) is local (dx, -dy).
+    const yaw = Math.atan2(o.dir.x, -o.dir.y);
+    if (o.kind === "door") {
+      const top = Math.min(DOOR_HEIGHT_M, H);
+      if (width > 2 * FRAME_M + 0.1) slots.push({ kind: "door", openingId: o.id, x: c.x, y: 0, z: c.z, width, height: top, thickness, yaw });
+    } else {
+      const head = Math.min(WINDOW_HEAD_M, H);
+      if (width > 2 * FRAME_M + 0.05 && head - SILL_HEIGHT_M > 2 * FRAME_M + 0.05)
+        slots.push({ kind: "window", openingId: o.id, x: c.x, y: SILL_HEIGHT_M, z: c.z, width, height: head - SILL_HEIGHT_M, thickness, yaw });
+    }
+  }
+  return slots;
 }

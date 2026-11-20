@@ -20,6 +20,7 @@ const SECTIONS = [
   { id: "ar", label: "Keeping the model still in AR" },
   { id: "glossary", label: "Glossary" },
   { id: "faq", label: "Questions" },
+  { id: "credits", label: "Credits" },
 ];
 
 /** Plain version of viz.meta.note (which speaks of JSON keys) for the panel. */
@@ -172,6 +173,27 @@ export function LearnPage() {
             </details>
           ))}
         </div>
+      </section>
+
+      <section id="credits" className={styles.section}>
+        <h2>Credits</h2>
+        <p>
+          The 3D model&apos;s surfaces and fixtures are public-domain (CC0 1.0) assets, bundled with the app so they also work offline.
+          Attribution is not required; it is given anyway.
+        </p>
+        <ul>
+          <li>
+            Wall plaster, oak floor, stone tile, concrete and door veneer textures: <a href="https://ambientcg.com">ambientCG</a> (Plaster001,
+            WoodFloor051, Tiles139, Concrete034, Wood049), CC0 1.0.
+          </li>
+          <li>
+            Door (with handle) and window models: Kenney <a href="https://kenney.nl/assets/furniture-kit">Furniture Kit</a>, CC0 1.0.
+          </li>
+        </ul>
+        <p className="small muted">
+          Full list with sources and changes: <a href="/textures/CREDITS.txt">textures/CREDITS.txt</a> and{" "}
+          <a href="/models/CREDITS.txt">models/CREDITS.txt</a>.
+        </p>
       </section>
     </div>
   );

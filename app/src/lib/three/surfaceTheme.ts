@@ -13,6 +13,9 @@
  * is the number a theme will produce at most; tests hold it to <= 10.
  */
 import * as THREE from "three";
+import type { OpeningKind } from "@/lib/plan/fixtures";
+import { homeTheme } from "./homeTheme";
+import type { FitMode, KitFixture } from "./kitFixtures";
 import { getWallTexture } from "./materials";
 
 /** Room types the engine emits (backend cubicasa.py). Anything else is "generic". */
@@ -20,10 +23,16 @@ export const ROOM_TYPES = ["bedroom", "living_room", "bathroom", "kitchen", "ent
 export type RoomType = (typeof ROOM_TYPES)[number] | "generic";
 export type FloorKind = `floor_${RoomType}`;
 
-export type SurfaceKind = "wall" | "slab" | "skirting" | "door" | "window_frame" | "glass" | FloorKind;
+export type RequiredSurfaceKind = "wall" | "slab" | "skirting" | "door" | "window_frame" | "glass" | FloorKind;
+/**
+ * Kinds a theme MAY cover. "hardware" is only emitted by kit fixture models
+ * (door handles); a theme without kit fixtures never needs it.
+ */
+export type OptionalSurfaceKind = "hardware";
+export type SurfaceKind = RequiredSurfaceKind | OptionalSurfaceKind;
 
 /** Every kind a theme must cover. */
-export const SURFACE_KINDS: readonly SurfaceKind[] = [
+export const SURFACE_KINDS: readonly RequiredSurfaceKind[] = [
   "wall",
   "slab",
   "skirting",
@@ -44,7 +53,37 @@ export type MaterialFactory = (kind: SurfaceKind) => THREE.Material;
 export interface SurfaceTheme {
   /** registry key, used by ?theme= and the bake-off output folder */
   readonly name: string;
-  readonly materials: Readonly<Record<SurfaceKind, MaterialFactory>>;
+  readonly materials: Readonly<Record<RequiredSurfaceKind, MaterialFactory>> &
+    Readonly<Partial<Record<OptionalSurfaceKind, MaterialFactory>>>;
+  /**
+   * Optional async warm-up (image textures, kit models) that callers await
+   * before the first build. Memoised: every call returns the same promise.
+   * Must never reject: assets that fail to load leave the build on flat
+   * colours and box fixtures instead of blocking it (works offline).
+   */
+  preload?(): Promise<void>;
+  /** true once preload() has settled (or the theme has no preload) */
+  isReady?(): boolean;
+  /** Optional numbers for the bake-off metrics (load times, failures, ...). */
+  stats?(): Record<string, unknown>;
+  /** a kit model that fills openings of this kind instead of the box fixtures */
+  fixtureModel?(kind: OpeningKind): KitFixture | null;
+  /** how fixture models are fitted into openings (default "slice") */
+  fixtureFit?: FitMode;
+}
+
+export function themeHas(theme: SurfaceTheme, kind: SurfaceKind): boolean {
+  return typeof theme.materials[kind] === "function";
+}
+
+/** Await a theme's assets. Resolves immediately for synchronous themes; never rejects. */
+export function preloadTheme(theme: SurfaceTheme = DEFAULT_THEME): Promise<void> {
+  return theme.preload ? theme.preload().catch(() => undefined) : Promise.resolve();
+}
+
+/** Has the theme finished loading (successfully or not)? */
+export function themeReady(theme: SurfaceTheme = DEFAULT_THEME): boolean {
+  return theme.isReady ? theme.isReady() : !theme.preload;
 }
 
 /** null / unknown room types fall back to the generic floor. */
@@ -55,7 +94,7 @@ export function floorKind(roomType: string | null | undefined): FloorKind {
 
 /** Distinct materials a theme can produce (= distinct factories). */
 export function themeMaterialCount(theme: SurfaceTheme): number {
-  return new Set(Object.values(theme.materials)).size;
+  return new Set(Object.values(theme.materials).filter(Boolean)).size;
 }
 
 /**
@@ -68,6 +107,7 @@ export class ThemeMaterials {
 
   get(kind: SurfaceKind): THREE.Material {
     const factory = this.theme.materials[kind];
+    if (!factory) throw new Error(`theme ${this.theme.name} has no material for ${kind}`);
     let mat = this.byFactory.get(factory);
     if (!mat) {
       mat = factory(kind);
@@ -79,8 +119,9 @@ export class ThemeMaterials {
 }
 
 // ---------------------------------------------------------------------------
-// Placeholder theme: neutral colours, the plaster map on walls and slab. It is
-// the bake-off baseline, not a candidate. Real options plug in alongside it.
+// Placeholder theme: neutral colours, the procedural plaster map on walls and
+// slab, P0 box fixtures, no async assets. It was the bake-off baseline; it stays
+// registered for comparison (?theme=placeholder) and for tests.
 // ---------------------------------------------------------------------------
 
 /** Non-metallic PBR: GLTFExporter writes non-Standard materials as 50 % metal. */
@@ -129,12 +170,18 @@ export const placeholderTheme: SurfaceTheme = {
   },
 };
 
-/** Themes selectable by name (?theme= in the bake-off). Options register here. */
+/** Themes selectable by name (?theme= in the bake-off). */
 export const THEMES: Readonly<Record<string, SurfaceTheme>> = {
+  home: homeTheme,
   placeholder: placeholderTheme,
 };
 
-export const DEFAULT_THEME = placeholderTheme;
+/**
+ * The app's theme (viewer, AR, GLB export): "home", the bake-off winner
+ * (docs/research/bakeoff/DECISION.md). Its assets load asynchronously, so
+ * every consumer awaits preloadTheme() before its first build.
+ */
+export const DEFAULT_THEME: SurfaceTheme = homeTheme;
 
 export function themeByName(name: string | null | undefined): SurfaceTheme {
   return (name && THEMES[name]) || DEFAULT_THEME;

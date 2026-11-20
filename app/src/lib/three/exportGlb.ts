@@ -10,7 +10,7 @@ import * as THREE from "three";
 import { GLTFExporter } from "three/examples/jsm/exporters/GLTFExporter.js";
 import type { Plan } from "@/lib/plan/types";
 import { buildFloorplanGroup, disposeGroup } from "./buildFloorplanGroup";
-import type { SurfaceTheme } from "./surfaceTheme";
+import { DEFAULT_THEME, preloadTheme, type SurfaceTheme } from "./surfaceTheme";
 
 export interface GlbOptions {
   ppm: number;
@@ -28,9 +28,15 @@ export async function exportObjectAsGlb(object: THREE.Object3D): Promise<Blob> {
   return new Blob([result], { type: "model/gltf-binary" });
 }
 
-/** Build a fresh model from a plan and export it (no scene required). */
+/**
+ * Build a fresh model from a plan and export it (no scene required). Waits for
+ * the theme's textures and kit models first, so the file is never the
+ * flat-colour fallback unless the assets truly failed to load.
+ */
 export async function planToGlb(plan: Plan, opts: GlbOptions): Promise<Blob> {
-  const { group } = buildFloorplanGroup(plan, { ...opts, includeRooms: opts.includeRooms ?? true });
+  const theme = opts.theme ?? DEFAULT_THEME;
+  await preloadTheme(theme);
+  const { group } = buildFloorplanGroup(plan, { ...opts, theme, includeRooms: opts.includeRooms ?? true });
   // The exporter needs world matrices; this group has no parent.
   group.updateMatrixWorld(true);
   try {
