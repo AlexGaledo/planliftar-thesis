@@ -1,0 +1,33 @@
+.section {
+  display: grid;
+  gap: var(--space-4);
+  padding-top: var(--space-5);
+  border-top: var(--stroke) solid var(--ink);
+}
+.fieldset {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--space-1);
+}
+.fieldset legend {
+  margin-bottom: var(--space-2);
+}
+.preview {
+  margin: 0;
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: var(--space-1) var(--space-3);
+  padding: var(--space-3);
+  background: var(--wash);
+  border-radius: var(--radius-s);
+  font-size: var(--step--1);
+}
+.preview dt {
+  color: var(--graphite);
+}
+.preview dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
