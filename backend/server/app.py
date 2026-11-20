@@ -12,12 +12,12 @@ from starlette.responses import JSONResponse, Response
 from starlette.websockets import WebSocket
 
 from .config import Settings
-from .cors import CorsAndLimitsMiddleware, OriginPolicy
+from .cors import CorsAndLimitsMiddleware, HostPolicy, OriginPolicy
 from .hub import Hub
 from .jobs import JobManager, QueueFull
 from .runners import DemoRunner, EngineRunner
 from .static import serve_spa
-from .tls import CertPaths, ca_der
+from .tls import CertPaths, ca_der, get_lan_ips
 from .uploads import UploadRejected, parse_options, validate_image
 
 ENGINE_VERSION_FALLBACK = "0.1.0"
@@ -42,6 +42,8 @@ def create_app(settings: Settings | None = None, runner=None) -> FastAPI:
     jobs = JobManager(settings, runner)
     hub = Hub()
     policy = OriginPolicy(settings.allowed_origins, settings.allow_private_lan_origins)
+    lan_ips = settings.lan_ips if settings.lan_ips is not None else tuple(get_lan_ips())
+    hosts = HostPolicy(lan_ips, settings.listen_ports, settings.allowed_hosts)
     certs = CertPaths(settings.cert_dir)
     version = _engine_version(settings.demo)
 
@@ -54,7 +56,8 @@ def create_app(settings: Settings | None = None, runner=None) -> FastAPI:
     app = FastAPI(title="PlanLiftAR server", lifespan=lifespan, docs_url=None,
                   redoc_url=None, openapi_url=None)
     app.state.settings, app.state.jobs, app.state.hub, app.state.runner = settings, jobs, hub, runner
-    app.add_middleware(CorsAndLimitsMiddleware, policy=policy, max_body=settings.max_upload_bytes)
+    app.add_middleware(CorsAndLimitsMiddleware, policy=policy, hosts=hosts,
+                       max_body=settings.max_upload_bytes)
 
     @app.exception_handler(StarletteHTTPException)
     async def _http_exc(request: Request, exc: StarletteHTTPException):
@@ -138,10 +141,7 @@ def create_app(settings: Settings | None = None, runner=None) -> FastAPI:
     # ---------------------------------------------------------------- hub
     @app.websocket("/ws")
     async def ws_hub(websocket: WebSocket):
-        headers = websocket.headers
-        if not policy.allows(headers.get("origin"), headers.get("host")):
-            await websocket.close(code=1008)
-            return
+        # Host and Origin were already checked by CorsAndLimitsMiddleware.
         await hub.handle(websocket)
 
     # ---------------------------------------------------------------- cert

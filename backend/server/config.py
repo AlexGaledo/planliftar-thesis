@@ -38,7 +38,11 @@ class Settings:
     # --- web ----------------------------------------------------------------
     static_dir: Path = REPO_DIR / "app" / "dist"
     allowed_origins: tuple[str, ...] = field(default_factory=_env_origins)
-    allow_private_lan_origins: bool = True
+    allow_private_lan_origins: bool = False   # --allow-lan-origins (opt-in)
+    # Host allowlist (DNS rebinding): loopback + lan_ips on listen_ports, plus extras.
+    lan_ips: tuple[str, ...] | None = None    # None = discover with tls.get_lan_ips()
+    listen_ports: tuple[int, ...] = (8000, 8443)
+    allowed_hosts: tuple[str, ...] = ()       # --allowed-host, "name" or "name:port"
 
     # --- tls ----------------------------------------------------------------
     cert_dir: Path = BACKEND_DIR / ".certs"

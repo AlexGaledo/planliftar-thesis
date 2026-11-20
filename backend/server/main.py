@@ -33,16 +33,25 @@ def parse_args(argv=None):
                     help="preload MitUNet only (CubiCasa loads on the first full job)")
     ap.add_argument("--allow-origin", action="append", default=[], metavar="ORIGIN",
                     help="extra CORS origin, e.g. https://planliftar.vercel.app (repeatable; "
-                         "'*' = any). Private-LAN origins are always allowed.")
+                         "'*' = any)")
+    ap.add_argument("--allow-lan-origins", action="store_true",
+                    help="also accept requests from pages on any private-LAN origin "
+                         "(192.168.x.x, 10.x.x.x, ...); off by default (CSRF)")
+    ap.add_argument("--allowed-host", action="append", default=[], metavar="HOST",
+                    help="extra Host header to accept besides localhost and this machine's "
+                         "LAN IPs, e.g. mylaptop.local or mylaptop.local:8443 (repeatable)")
     ap.add_argument("--static-dir", help="built PWA directory (default: app/dist)")
     ap.add_argument("--max-queue", type=int, default=8)
     ap.add_argument("--job-ttl", type=float, default=3600.0, help="seconds to keep results")
     return ap.parse_args(argv)
 
 
-def build_settings(a) -> Settings:
+def build_settings(a, lan_ips=None) -> Settings:
     s = Settings()
-    kw = dict(demo=a.demo, preload=not a.no_preload, device="cpu" if a.cpu else "auto",
+    ports = (a.port, a.tls_port) if a.tls else (a.port,)
+    kw = dict(lan_ips=tuple(lan_ips) if lan_ips is not None else None, listen_ports=ports,
+              allowed_hosts=tuple(a.allowed_host), allow_private_lan_origins=a.allow_lan_origins,
+              demo=a.demo, preload=not a.no_preload, device="cpu" if a.cpu else "auto",
               preload_cubicasa=not a.no_cubicasa_preload, tls=a.tls,
               max_queue=a.max_queue, job_ttl_s=a.job_ttl,
               allowed_origins=tuple(s.allowed_origins) + tuple(o.rstrip("/") for o in a.allow_origin))
@@ -98,7 +107,7 @@ async def serve(a, settings: Settings) -> None:
     from .app import create_app
     from .tls import CertPaths, get_lan_ips, make_ssl_context  # noqa: F401
 
-    ips = get_lan_ips()
+    ips = list(settings.lan_ips or get_lan_ips())
     app = create_app(settings)
     common = dict(log_level="warning", ws_max_size=1 << 20, timeout_graceful_shutdown=3)
     servers = [uvicorn.Server(uvicorn.Config(app, host=a.host, port=a.port, lifespan="on",
@@ -124,7 +133,8 @@ async def serve(a, settings: Settings) -> None:
 
 def main(argv=None) -> int:
     a = parse_args(argv)
-    settings = build_settings(a)
+    from .tls import get_lan_ips
+    settings = build_settings(a, get_lan_ips())
     try:
         sys.stdout.reconfigure(line_buffering=True)
     except Exception:

@@ -36,14 +36,16 @@ def png_bytes(w=320, h=240, fmt="PNG") -> bytes:
 
 def demo_settings(tmp_path, **kw) -> Settings:
     dist = tmp_path / "dist"
-    (dist / "assets").mkdir(parents=True)
+    (dist / "assets").mkdir(parents=True, exist_ok=True)
     (dist / "index.html").write_text("<!doctype html><title>app</title>", encoding="utf-8")
     (dist / "sw.js").write_text("self.addEventListener('fetch',()=>{})", encoding="utf-8")
     (dist / "manifest.webmanifest").write_text("{}", encoding="utf-8")
     (dist / "assets" / "index-abc123.js").write_text("console.log(1)", encoding="utf-8")
     (tmp_path / "config.py").write_text("MAX_UPLOAD_BYTES = 1  # outside dist", encoding="utf-8")
     base = Settings(demo=True, demo_step_s=0.02, static_dir=dist, cert_dir=tmp_path / "certs",
-                    allowed_origins=("https://planliftar.vercel.app",))
+                    allowed_origins=("https://planliftar.vercel.app",),
+                    lan_ips=("192.168.1.20",), listen_ports=(8000, 8443),
+                    allowed_hosts=("testserver",))     # TestClient's default Host
     return replace(base, **kw)
 
 
@@ -203,8 +205,7 @@ def test_queue_full_is_503(tmp_path):
 # ---------------------------------------------------------------------- CORS
 def test_cors_preflight_and_headers(client):
     pre = {"Access-Control-Request-Method": "POST", "Access-Control-Request-Headers": "content-type"}
-    for origin in ("https://planliftar.vercel.app", "http://192.168.1.20:5173",
-                   "http://localhost:5173"):
+    for origin in ("https://planliftar.vercel.app", "http://localhost:5173"):
         r = client.options("/api/jobs", headers={"Origin": origin, **pre})
         assert r.status_code == 204, origin
         assert r.headers["access-control-allow-origin"] == origin
@@ -220,7 +221,70 @@ def test_cors_preflight_and_headers(client):
     r = client.get("/api/health", headers={"Origin": "https://planliftar.vercel.app"})
     assert r.headers["access-control-allow-origin"] == "https://planliftar.vercel.app"
     r = client.get("/api/health", headers={"Origin": "https://evil.example"})
-    assert "access-control-allow-origin" not in r.headers
+    assert r.status_code == 403 and "access-control-allow-origin" not in r.headers
+
+
+# ------------------------------------------- Host allowlist / Origin (CSRF)
+@pytest.mark.parametrize("host", ["evil.example", "evil.example:8000", "192.168.1.99:8000",
+                                  "192.168.1.20:9999", "localhost:1234", ""])
+def test_unknown_host_is_421(client, host):
+    r = client.get("/api/health", headers={"Host": host})
+    assert r.status_code == 421, host
+    r = client.post(
+        "/api/jobs", headers={"Host": host}, files={"image": ("a.png", png_bytes(), "image/png")})
+    assert r.status_code == 421
+
+
+@pytest.mark.parametrize("host", ["localhost:8000", "127.0.0.1:8000", "[::1]:8000",
+                                  "192.168.1.20:8443", "testserver"])
+def test_known_hosts_pass(client, host):
+    assert client.get("/api/health", headers={"Host": host}).status_code == 200
+
+
+def test_extra_allowed_host_flag(tmp_path):
+    s = demo_settings(tmp_path, allowed_hosts=("testserver", "mylaptop.local:8443"))
+    with TestClient(create_app(s)) as c:
+        assert c.get("/api/health", headers={"Host": "mylaptop.local:8443"}).status_code == 200
+        assert c.get("/api/health", headers={"Host": "mylaptop.local:8000"}).status_code == 421
+
+
+def test_cross_site_post_is_403_before_the_app_runs(client):
+    jobs = client.app.state.jobs
+    before = jobs.counts()
+    for origin in ("https://evil.example", "http://192.168.1.50:3000", "null"):
+        r = client.post("/api/jobs", headers={"Origin": origin},
+                        files={"image": ("a.png", png_bytes(), "image/png")})
+        assert r.status_code == 403, origin
+    assert jobs.counts() == before
+    # same origin (Origin matches an allowed Host) and the configured origin pass
+    for origin in ("http://testserver", "https://planliftar.vercel.app"):
+        r = client.post("/api/jobs", headers={"Origin": origin},
+                        files={"image": ("a.png", png_bytes(), "image/png")})
+        assert r.status_code == 202, origin
+    r = client.post("/api/jobs", headers={"Origin": "http://192.168.1.20:8443",
+                                          "Host": "192.168.1.20:8443"},
+                    files={"image": ("a.png", png_bytes(), "image/png")})
+    assert r.status_code == 202
+
+
+def test_lan_origins_are_opt_in(tmp_path):
+    pre = {"Origin": "http://192.168.1.50:5173", "Access-Control-Request-Method": "POST"}
+    with TestClient(create_app(demo_settings(tmp_path))) as c:
+        assert c.options("/api/jobs", headers=pre).status_code == 403
+    with TestClient(create_app(demo_settings(tmp_path, allow_private_lan_origins=True))) as c:
+        r = c.options("/api/jobs", headers=pre)
+        assert r.status_code == 204
+        assert r.headers["access-control-allow-origin"] == "http://192.168.1.50:5173"
+
+
+def test_ws_rejects_unknown_host(client):
+    from starlette.websockets import WebSocketDisconnect
+    with pytest.raises(WebSocketDisconnect):
+        with client.websocket_connect("/ws", headers={"Host": "evil.example"}) as ws:
+            ws.receive_text()
+    with client.websocket_connect("/ws", headers={"Host": "192.168.1.20:8443",
+                                                  "Origin": "https://192.168.1.20:8443"}) as ws:
+        ws.send_text('{"role":"viewer"}')     # accepted: same origin on a LAN IP
 
 
 # ------------------------------------------------------------------- ws hub
