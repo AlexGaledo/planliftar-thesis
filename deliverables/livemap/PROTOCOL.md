@@ -123,9 +123,13 @@ every (re)connect of its AR page. `ppm` (plan px per metre) and
 `wall_height_m` are optional hints; `plan_id` is the phone's project id and
 only identifies the plan, it is not a key into the viewer's library.
 
-Size limit: the whole message must be at most **2 MB**. The app's `/ws` hub
-drops a bigger one and answers the phone with
-`{"type": "plan_rejected", "reason": "..."}`; it never reaches viewers.
+Limits: the whole message must be at most **2 MB** of UTF-8, and a phone
+(by network address) may update the plan at most **once every 2 s**. The
+app's `/ws` hub drops a message that breaks either limit and answers the phone
+with `{"type": "plan_rejected", "reason": "..."}`; it never reaches viewers.
+Other messages are capped at 256 KB. The hub keeps only the latest plan per
+viewer (a newer plan replaces an unsent older one) and sends it before queued
+poses.
 
 Hub behaviour: the `/ws` hub (backend/server/hub.py) forwards it like any
 phone message and also **caches the latest one**, replaying it to each viewer

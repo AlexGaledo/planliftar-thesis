@@ -379,6 +379,89 @@ def test_ws_plan_from_viewer_is_not_cached_and_big_plans_rejected(client):
         assert client.app.state.hub.shared_plan is None
 
 
+def test_ws_size_caps_count_utf8_bytes_not_characters(client):
+    from server.hub import MAX_MESSAGE_BYTES, PLAN_MAX_BYTES
+    with client.websocket_connect("/ws") as phone, client.websocket_connect("/ws") as viewer:
+        phone.send_text('{"role":"phone"}')
+        viewer.send_text('{"role":"viewer"}')
+        _wait_counts(client, phones=1, viewers=1)
+        # ~1 M characters but > 2 MB of UTF-8: must be rejected as too large.
+        multibyte_plan = json.dumps({"type": "plan", "plan": {"walls": [], "n": "é" * (PLAN_MAX_BYTES // 2 + 64)}},
+                                    ensure_ascii=False)
+        assert len(multibyte_plan) < PLAN_MAX_BYTES < len(multibyte_plan.encode())
+        phone.send_text(multibyte_plan)
+        reply = json.loads(phone.receive_text())
+        assert reply["type"] == "plan_rejected" and "2 MB" in reply["reason"]
+        # A regular message under the cap in characters but over it in bytes is dropped.
+        diag = json.dumps({"type": "diag", "s": "é" * (MAX_MESSAGE_BYTES // 2 + 64)}, ensure_ascii=False)
+        assert len(diag) < MAX_MESSAGE_BYTES < len(diag.encode())
+        phone.send_text(diag)
+        phone.send_text('{"x":5,"y":6,"yaw_deg":0}')
+        assert viewer.receive_text() == '{"x":5,"y":6,"yaw_deg":0}'
+        assert client.app.state.hub.shared_plan is None
+
+
+def test_ws_plan_updates_are_rate_limited_per_phone(client, monkeypatch):
+    import server.hub as hub_mod
+    monkeypatch.setattr(hub_mod, "PLAN_MIN_INTERVAL_S", 0.3)
+    first = json.dumps({"type": "plan", "plan_id": "a", "plan": {"walls": []}})
+    second = json.dumps({"type": "plan", "plan_id": "b", "plan": {"walls": []}})
+    third = json.dumps({"type": "plan", "plan_id": "c", "plan": {"walls": []}})
+    with client.websocket_connect("/ws") as phone, client.websocket_connect("/ws") as viewer:
+        phone.send_text('{"role":"phone"}')
+        viewer.send_text('{"role":"viewer"}')
+        _wait_counts(client, phones=1, viewers=1)
+        phone.send_text(first)
+        assert viewer.receive_text() == first
+        phone.send_text(second)                        # too soon: dropped
+        reply = json.loads(phone.receive_text())
+        assert reply["type"] == "plan_rejected" and "limited" in reply["reason"]
+        assert client.app.state.hub.shared_plan == first
+        time.sleep(0.35)
+        phone.send_text(third)                         # interval passed: accepted
+        assert viewer.receive_text() == third
+        assert client.app.state.hub.shared_plan == third
+    # A reconnect from the same address does not reset the limit.
+    with client.websocket_connect("/ws") as phone2:
+        phone2.send_text('{"role":"phone"}')
+        phone2.send_text(second)
+        assert json.loads(phone2.receive_text())["type"] == "plan_rejected"
+
+
+def test_plan_slot_keeps_only_the_latest_plan_outside_the_outbox():
+    import asyncio
+    from server.hub import OUTBOX_SIZE, _Client
+
+    class FakeWs:
+        def __init__(self):
+            self.sent = []
+
+        async def send_text(self, msg):
+            self.sent.append(msg)
+
+    async def run():
+        ws = FakeWs()
+        c = _Client(ws)
+        for i in range(OUTBOX_SIZE + 10):
+            c.offer(f"m{i}")
+        for i in range(50):                            # 50 plans: only the last is kept
+            c.offer_plan(f"plan{i}")
+        assert len(c.outbox) == OUTBOX_SIZE            # bounded; plans never queued here
+        assert c.plan_slot == "plan49"
+        task = asyncio.create_task(c.pump())
+        for _ in range(100):
+            await asyncio.sleep(0)
+            if len(ws.sent) == OUTBOX_SIZE + 1:
+                break
+        task.cancel()
+        return ws.sent
+
+    sent = asyncio.run(run())
+    assert sent[0] == "plan49"                         # plan flushed before regular messages
+    assert [m for m in sent if m.startswith("plan")] == ["plan49"]
+    assert sent[1] == "m10" and sent[-1] == f"m{OUTBOX_SIZE + 9}"   # oldest dropped
+
+
 # ------------------------------------------------------------- /api/models
 def glb_bytes(extra=b"") -> bytes:
     import struct
