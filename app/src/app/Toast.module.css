@@ -1,0 +1,32 @@
+.toast {
+  position: fixed;
+  z-index: 50;
+  left: var(--space-4);
+  right: var(--space-4);
+  bottom: calc(var(--tabbar-h) + var(--safe-b) + var(--space-3));
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  background: var(--paper);
+  border: var(--stroke) solid var(--ink);
+  border-radius: var(--radius-m);
+  box-shadow: 4px 4px 0 var(--ink);
+  animation: rise 200ms ease-out;
+}
+@keyframes rise {
+  from {
+    transform: translateY(8px);
+    opacity: 0;
+  }
+}
+@media (min-width: 900px) {
+  .toast {
+    left: auto;
+    right: var(--space-5);
+    bottom: var(--space-5);
+    max-width: 440px;
+  }
+}

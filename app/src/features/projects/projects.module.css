@@ -1,0 +1,114 @@
+.grid {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: var(--space-5);
+}
+
+/* A drawing sheet: thin outer border, the drawing, then a ruled title block. */
+.card {
+  height: 100%;
+  display: grid;
+  grid-template-rows: auto 1fr;
+  border: var(--stroke) solid var(--ink);
+  border-radius: var(--radius-s);
+  background: var(--paper);
+  transition: box-shadow 150ms ease, transform 150ms ease;
+}
+.card:has(.sheet:hover),
+.card:focus-within {
+  box-shadow: 4px 4px 0 var(--ink);
+  transform: translate(-2px, -2px);
+}
+
+.sheet {
+  display: block;
+  aspect-ratio: 4 / 3;
+  padding: var(--space-4);
+  /* faint drafting grid behind the drawing */
+  background-image:
+    linear-gradient(var(--wash) 1px, transparent 1px),
+    linear-gradient(90deg, var(--wash) 1px, transparent 1px);
+  background-size: 16px 16px;
+  border-bottom: var(--stroke) solid var(--ink);
+}
+.drawing {
+  width: 100%;
+  height: 100%;
+}
+
+.titleBlock {
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+}
+.name {
+  font-size: var(--step-1);
+  padding: var(--space-3) var(--space-3) var(--space-2);
+  overflow-wrap: anywhere;
+}
+.name a {
+  text-decoration: none;
+}
+.name a:hover {
+  text-decoration: underline;
+}
+
+.facts {
+  margin: 0;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  border-top: 1px solid var(--ink);
+}
+.facts > div {
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--rule);
+}
+.facts > div:nth-child(odd) {
+  border-right: 1px solid var(--rule);
+}
+.facts dt {
+  font-size: 12px;
+  color: var(--graphite);
+}
+.facts dd {
+  margin: 0;
+  font-weight: 600;
+}
+
+.actions {
+  display: flex;
+  justify-content: flex-end;
+  padding: var(--space-1);
+}
+.actions :global(.btn) {
+  min-height: 40px;
+  font-weight: 500;
+  color: var(--graphite);
+}
+.actions :global(.btn):hover {
+  color: var(--ink);
+}
+
+.skeleton {
+  aspect-ratio: 4 / 4.2;
+  border: var(--stroke) dashed var(--rule);
+  border-radius: var(--radius-s);
+  background: var(--wash);
+  animation: pulse 1.4s ease-in-out infinite alternate;
+}
+@keyframes pulse {
+  to {
+    opacity: 0.5;
+  }
+}
+
+.empty {
+  border: var(--stroke) dashed var(--ink);
+  border-radius: var(--radius-m);
+  padding: var(--space-6) var(--space-5);
+  display: grid;
+  gap: var(--space-3);
+  justify-items: start;
+}

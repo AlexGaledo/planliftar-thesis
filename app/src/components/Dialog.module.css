@@ -1,0 +1,20 @@
+.dialog {
+  width: min(440px, calc(100vw - 32px));
+  padding: 0;
+  border: var(--stroke) solid var(--ink);
+  border-radius: var(--radius-m);
+  background: var(--paper);
+  color: var(--ink);
+  box-shadow: 6px 6px 0 var(--ink);
+}
+.dialog::backdrop {
+  background: rgb(0 0 0 / 0.45);
+}
+.body {
+  padding: var(--space-5);
+  display: grid;
+  gap: var(--space-4);
+}
+.title {
+  font-size: var(--step-1);
+}

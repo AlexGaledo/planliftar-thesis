@@ -1,0 +1,17 @@
+.drawing {
+  display: grid;
+  place-items: center;
+}
+.drawing img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+@media (prefers-color-scheme: dark) {
+  :global(:root:not([data-theme="light"])) .drawing img {
+    filter: invert(1);
+  }
+}
+:global(:root[data-theme="dark"]) .drawing img {
+  filter: invert(1);
+}
