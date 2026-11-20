@@ -1991,6 +1991,7 @@ function onXrFrame(timestamp, frame) {
   if (timestamp - lastTapDebugAt > 500) {
     lastTapDebugAt = timestamp;
     tapDebug();
+    sendDiag(frame, refSpace, viewerPose);
   }
 
   renderer.render(scene, camera);
@@ -2013,6 +2014,41 @@ const _camPos = new THREE.Vector3();
 const _camQuat = new THREE.Quaternion();
 const _forward = new THREE.Vector3();
 const _groupQuatInv = new THREE.Quaternion();
+
+// Tracking telemetry for remote debugging. Carries a "type", so viewers
+// ignore it per PROTOCOL.md; a laptop-side listener can log it while
+// someone walks with the phone.
+const AR_BUILD = "2026-11-08-diag1";
+function sendDiag(frame, refSpace, viewerPose) {
+  if (!socket || socket.readyState !== WebSocket.OPEN) return;
+  const r3 = (v) => v ? [+v.x.toFixed(3), +v.y.toFixed(3), +v.z.toFixed(3)] : null;
+  let anchorPos = null;
+  let anchorTracked = null;
+  if (placementAnchor) {
+    const tracked = frame.trackedAnchors;
+    anchorTracked = tracked ? tracked.has(placementAnchor) : null;
+    try {
+      const p = frame.getPose(placementAnchor.anchorSpace, refSpace);
+      if (p) anchorPos = r3(p.transform.position);
+    } catch (e) { /* anchor deleted */ }
+  }
+  socket.send(JSON.stringify({
+    type: "diag",
+    build: AR_BUILD,
+    text: tapInfo.textContent,
+    refSpace: renderer.xr.getReferenceSpaceType?.() ?? null,
+    granted: xrSession && xrSession.enabledFeatures ? [...xrSession.enabledFeatures] : null,
+    emulated: viewerPose ? viewerPose.emulatedPosition : null,
+    cam: viewerPose ? r3(viewerPose.transform.position) : null,
+    group: placementGroup ? r3(placementGroup.position) : null,
+    groupVisible: placementGroup ? placementGroup.visible : null,
+    placed,
+    hasAnchor: !!placementAnchor,
+    anchorTracked,
+    anchor: anchorPos,
+    denom: modelDenom,
+  }));
+}
 
 function maybeSendPose(timestamp) {
   if (timestamp - lastSendAt < SEND_INTERVAL_MS) return;

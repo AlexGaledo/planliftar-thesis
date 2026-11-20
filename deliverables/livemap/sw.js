@@ -14,7 +14,7 @@
  * the server with --tls and install its certificate on the phone (see
  * README.md) or none of this applies.
  */
-const VERSION = "planliftar-v2";
+const VERSION = "planliftar-v3";
 const SHELL = VERSION + "-shell";
 
 // Same-origin app shell. Kept explicit rather than globbed: a typo here is a
