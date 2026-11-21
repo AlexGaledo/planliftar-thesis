@@ -1,4 +1,4 @@
-"""PlanLiftAR local server: docs/API.md over planliftar_engine, the /ws hub, and the PWA.
+"""PlanVisAR local server: docs/API.md over planliftar_engine, the /ws hub, and the PWA.
 
     python run_server.py --tls            (from backend/)
     python -m server --tls                (same thing)

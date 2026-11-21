@@ -7,7 +7,7 @@
  *
  * Palette: categorical slots 1-3 of the dataviz reference palette (blue,
  * orange, aqua), validated with the skill's validate_palette.js against our
- * own surfaces (#fff light, #000 dark): all checks pass; light aqua is under
+ * own surfaces (#fafaf7 light, #0d1c1c dark): all checks pass; light aqua is under
  * 3:1, so every chart also ships a data table (the "relief" rule). Single-series
  * charts use plain ink, in keeping with the black-and-white drawing style.
  */
@@ -21,8 +21,8 @@ export interface ChartColors {
   series: [string, string, string];
 }
 
-const LIGHT: ChartColors = { ink: "#000000", muted: "#545454", grid: "#e2e2e2", paper: "#ffffff", series: ["#2a78d6", "#eb6834", "#1baf7a"] };
-const DARK: ChartColors = { ink: "#ffffff", muted: "#a8a8a8", grid: "#2a2a2a", paper: "#000000", series: ["#3987e5", "#d95926", "#199e70"] };
+const LIGHT: ChartColors = { ink: "#12302f", muted: "#55625f", grid: "#dfe4e0", paper: "#fafaf7", series: ["#2a78d6", "#eb6834", "#1baf7a"] };
+const DARK: ChartColors = { ink: "#edf2f0", muted: "#9fb0ab", grid: "#1e3a3a", paper: "#0d1c1c", series: ["#3987e5", "#d95926", "#199e70"] };
 
 function isDark(): boolean {
   const forced = document.documentElement.dataset.theme;

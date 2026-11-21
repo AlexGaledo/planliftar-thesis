@@ -14,7 +14,7 @@ export function InstallBanner() {
 
   return (
     <aside className="notice" aria-label="Install the app">
-      <strong>Install PlanLiftAR on this device</strong>
+      <strong>Install PlanVisAR on this device</strong>
       <span className="small">
         {canInstall
           ? "It opens full screen and your saved plans work without a connection."

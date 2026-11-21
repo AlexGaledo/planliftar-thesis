@@ -1,4 +1,4 @@
-# PlanLiftAR HTTP + WebSocket API
+# PlanVisAR HTTP + WebSocket API
 
 The contract between the PWA in `app/` and the inference server built from
 `backend/planliftar_engine`. Both sides implement exactly this. Change it here first,

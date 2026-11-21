@@ -7,6 +7,7 @@
  */
 import { Suspense, useEffect } from "react";
 import { NavLink, Outlet, useNavigation } from "react-router-dom";
+import { LogoMark, Wordmark } from "@/components/Logo";
 import { seedSamplesOnce } from "@/lib/db/samples";
 import { useSettings } from "@/stores/settings";
 import { NavIcon, type NavIconName } from "./NavIcon";
@@ -45,8 +46,8 @@ export function AppShell() {
       </a>
       <nav className={styles.nav} aria-label="Main">
         <div className={styles.brand}>
-          <span className={styles.mark} aria-hidden="true" />
-          PlanLiftAR
+          <LogoMark className={styles.mark} />
+          <Wordmark />
         </div>
         <ul>
           {NAV.map((item) => (

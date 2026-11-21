@@ -47,7 +47,7 @@ export function UpdateToast() {
     <div className={styles.toast} role="status" aria-live="polite">
       {needRefresh ? (
         <>
-          <span>A new version of PlanLiftAR is ready.</span>
+          <span>A new version of PlanVisAR is ready.</span>
           <div className="row">
             <button className="btn btn-primary" type="button" onClick={() => updateServiceWorker(true)}>
               Reload to update

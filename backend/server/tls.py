@@ -155,7 +155,7 @@ def ensure_cert(paths: CertPaths, ips: list[str], force: bool = False) -> CertPa
 
     # CA: in memory only, never persisted.
     ca_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-    ca_name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "PlanLiftAR local CA")])
+    ca_name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "PlanVisAR local CA")])
     permitted = [x509.DNSName("localhost")] + [
         x509.IPAddress(ipaddress.ip_network(f"{a}/{32 if a.version == 4 else 128}"))
         for a in addresses]
@@ -175,7 +175,7 @@ def ensure_cert(paths: CertPaths, ips: list[str], force: bool = False) -> CertPa
     key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     leaf = (
         x509.CertificateBuilder()
-        .subject_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "planliftar-server")]))
+        .subject_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "planvisar-server")]))
         .issuer_name(ca_name)
         .public_key(key.public_key())
         .serial_number(x509.random_serial_number())

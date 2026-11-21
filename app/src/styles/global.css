@@ -1,27 +1,32 @@
 /*
  * Global design tokens and primitives.
  *
- * Direction (docs/APP_PLAN.md §7): black and white, taken from the drawing sheet.
- * Ink on paper; two signal colours, each with ONE meaning:
- *   --live  = live / ready (AR ring green, live dot, connected hub)
- *   --warn  = estimate / needs attention
+ * Direction: PlanVisAR identity "Survey pin" (deep teal ink on off-white
+ * paper, survey-tape orange as the brand accent). Colours with ONE meaning:
+ *   --accent = brand / primary action (primary buttons, logo, active tab)
+ *   --live   = live / ready (AR ring green, live dot, connected hub)
+ *   --warn   = estimate / needs attention (mustard, kept apart from --accent)
  * Feature components use CSS Modules; only shared primitives live here.
  */
 @import "@fontsource-variable/archivo/wdth.css";
+@import "@fontsource-variable/bricolage-grotesque";
 
 :root {
-  --paper: #ffffff;
-  --ink: #000000;
-  --graphite: #545454; /* secondary text: 7.4:1 on white */
-  --rule: #d6d6d6;
-  --wash: #f2f2f2;
-  --live: #13804b; /* 4.9:1 on white */
+  --paper: #fafaf7;
+  --ink: #12302f;
+  --graphite: #55625f; /* secondary text: 6.2:1 on paper */
+  --rule: #d7ddd8;
+  --wash: #eef0ec;
+  --accent: #c2410c; /* 5.0:1 on paper */
+  --on-accent: #ffffff;
+  --live: #13804b; /* 4.8:1 on paper */
   --live-wash: #e3f3ea;
-  --warn: #a15c00; /* 4.9:1 on white */
-  --warn-wash: #fbf0e0;
+  --warn: #7f5f00; /* 5.6:1 on paper */
+  --warn-wash: #f7efd2;
   --danger: #b42318;
   --danger-wash: #fbe9e7;
 
+  --font-display: "Bricolage Grotesque Variable", "Archivo Variable", system-ui, sans-serif;
   --font: "Archivo Variable", "Archivo", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   /* Type scale, ratio ~1.25 from 16px */
   --step--1: 0.8125rem; /* 13 */
@@ -51,33 +56,37 @@
   color-scheme: light;
 }
 
-/* Dark mode: paper and ink swap. Signals brighten to keep contrast on black. */
+/* Dark mode: night teal paper, light ink. Signals brighten to keep contrast. */
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --paper: #000000;
-    --ink: #ffffff;
-    --graphite: #a8a8a8;
-    --rule: #333333;
-    --wash: #141414;
+    --paper: #0d1c1c;
+    --ink: #edf2f0;
+    --graphite: #9fb0ab;
+    --rule: #264545;
+    --wash: #163030;
+    --accent: #ff7a3d;
+    --on-accent: #0d1c1c;
     --live: #43d18a;
     --live-wash: #0b2a1b;
-    --warn: #f0a33a;
-    --warn-wash: #2b1d08;
+    --warn: #e8b64a;
+    --warn-wash: #2b2208;
     --danger: #ff7a6b;
     --danger-wash: #2e0f0b;
     color-scheme: dark;
   }
 }
 :root[data-theme="dark"] {
-  --paper: #000000;
-  --ink: #ffffff;
-  --graphite: #a8a8a8;
-  --rule: #333333;
-  --wash: #141414;
+  --paper: #0d1c1c;
+  --ink: #edf2f0;
+  --graphite: #9fb0ab;
+  --rule: #264545;
+  --wash: #163030;
+  --accent: #ff7a3d;
+  --on-accent: #0d1c1c;
   --live: #43d18a;
   --live-wash: #0b2a1b;
-  --warn: #f0a33a;
-  --warn-wash: #2b1d08;
+  --warn: #e8b64a;
+  --warn-wash: #2b2208;
   --danger: #ff7a6b;
   --danger-wash: #2e0f0b;
   color-scheme: dark;
@@ -110,7 +119,7 @@ h2,
 h3,
 h4 {
   margin: 0;
-  font-stretch: 115%;
+  font-family: var(--font-display);
   font-weight: 700;
   line-height: 1.15;
   letter-spacing: -0.01em;
@@ -210,11 +219,12 @@ kbd {
   cursor: not-allowed;
 }
 .btn-primary {
-  background: var(--ink);
-  color: var(--paper);
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--on-accent);
 }
 .btn-primary:hover:not(:disabled) {
-  background: var(--ink);
+  background: var(--accent);
   opacity: 0.85;
 }
 .btn-quiet {

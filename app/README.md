@@ -1,4 +1,4 @@
-# PlanLiftAR app
+# PlanVisAR app
 
 An installable web app (PWA) that turns a picture of a floor plan into a 3D model you can walk through in AR on your phone, while a laptop follows you on a live map.
 

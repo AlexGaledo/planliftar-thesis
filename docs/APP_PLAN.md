@@ -1,4 +1,4 @@
-# PlanLiftAR app plan (MVP PWA)
+# PlanVisAR app plan (MVP PWA)
 
 Status: plan of record for `app/`, written before the build on 2026-11-20.
 Source of truth for behaviour is the working prototype in `deliverables/livemap/`
