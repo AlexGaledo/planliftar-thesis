@@ -7,6 +7,11 @@
  * rebuilds it only when the plan or scale changes; the effect disposes the old
  * GPU buffers.
  *
+ * The default "home" theme loads textures and door/window models
+ * asynchronously: the first build waits for them (useThemeReady), and if they
+ * are slow the untextured model shows first and is rebuilt once when they land.
+ * Lighting (environment map + hemisphere + sun) comes from lib/three/lighting.
+ *
  * @param plan         prepared plan
  * @param ppm          plan px per metre
  * @param wallHeightM  wall height in metres
@@ -16,10 +21,14 @@
 import { Html, OrbitControls } from "@react-three/drei";
 import { useThree } from "@react-three/fiber";
 import { useEffect, useMemo } from "react";
+import * as THREE from "three";
 import { roomLabel } from "@/features/plan/labels";
 import { boundsCenter, computeBounds, planToLocal, polygonCentroid, type Plan } from "@/lib/plan";
 import { buildFloorplanGroup, disposeGroup } from "@/lib/three/buildFloorplanGroup";
+import { createRoomEnvironment, VIEWER_LIGHTS } from "@/lib/three/lighting";
 import { applyWallOpacity } from "@/lib/three/materials";
+import { DEFAULT_THEME } from "@/lib/three/surfaceTheme";
+import { useThemeReady } from "@/lib/three/useThemeReady";
 import styles from "./viewer.module.css";
 
 interface FloorplanSceneProps {
@@ -31,10 +40,17 @@ interface FloorplanSceneProps {
 }
 
 export function FloorplanScene({ plan, ppm, wallHeightM, showLabels, wallOpacity }: FloorplanSceneProps) {
-  const model = useMemo(() => buildFloorplanGroup(plan, { ppm, wallHeightM, includeRooms: true }), [plan, ppm, wallHeightM]);
-  useEffect(() => () => disposeGroup(model.group), [model]);
+  const { ready, canBuild } = useThemeReady(DEFAULT_THEME);
+  // `ready` is a dependency on purpose: a build made before the assets arrived
+  // (canBuild after the grace period) is replaced once they do.
+  const model = useMemo(
+    () => (canBuild ? buildFloorplanGroup(plan, { ppm, wallHeightM, includeRooms: true, theme: DEFAULT_THEME }) : null),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [plan, ppm, wallHeightM, canBuild, ready],
+  );
+  useEffect(() => () => disposeGroup(model?.group), [model]);
   // Opacity only touches the material, no rebuild needed.
-  useEffect(() => applyWallOpacity(model.wallMaterial, wallOpacity), [model, wallOpacity]);
+  useEffect(() => model?.wallMaterials.forEach((m) => applyWallOpacity(m, wallOpacity)), [model, wallOpacity]);
 
   const labels = useMemo(() => {
     const center = boundsCenter(computeBounds(plan));
@@ -48,14 +64,26 @@ export function FloorplanScene({ plan, ppm, wallHeightM, showLabels, wallOpacity
       .filter((x): x is NonNullable<typeof x> => x !== null);
   }, [plan, ppm]);
 
+  const { hemisphere: hemi, sun } = VIEWER_LIGHTS;
+  if (!model) {
+    // The environment is prefiltered while the theme loads, off the model's critical path.
+    return (
+      <>
+        <color attach="background" args={["#f4f4f4"]} />
+        <ViewerEnvironment />
+      </>
+    );
+  }
+
   // Frame the camera on the footprint: distance grows with the building size.
   const size = Math.max(model.widthM, model.depthM, 1);
 
   return (
     <>
       <color attach="background" args={["#f4f4f4"]} />
-      <hemisphereLight args={["#ffffff", "#707070", 2.0]} />
-      <directionalLight position={[size, size * 2, size * 0.6]} intensity={1.1} />
+      <ViewerEnvironment />
+      <hemisphereLight args={[hemi.sky, hemi.ground, hemi.intensity]} />
+      <directionalLight position={[size, size * 2, size * 0.6]} color={sun.color} intensity={sun.intensity} />
       <primitive object={model.group} />
       {showLabels &&
         labels.map((l) => (
@@ -76,6 +104,22 @@ export function FloorplanScene({ plan, ppm, wallHeightM, showLabels, wallOpacity
       <CameraFrame size={size} />
     </>
   );
+}
+
+/** Neutral image-based light (RoomEnvironment via PMREM), made once per viewer and freed with it. */
+function ViewerEnvironment() {
+  const gl = useThree((s) => s.gl);
+  const scene = useThree((s) => s.scene);
+  useEffect(() => {
+    const env = createRoomEnvironment(gl);
+    const previous: THREE.Texture | null = scene.environment;
+    scene.environment = env.texture;
+    return () => {
+      scene.environment = previous;
+      env.dispose();
+    };
+  }, [gl, scene]);
+  return null;
 }
 
 /**

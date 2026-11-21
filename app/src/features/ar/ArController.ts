@@ -22,7 +22,9 @@ import { HubClient, type HubStatus } from "@/lib/hub/HubClient";
 import type { ControlPatch, PhoneState, XrStatus } from "@/lib/hub/protocol";
 import { boundsCenter, computeBounds, localToPlan, type Plan, type PlanBounds, type PlanPoint } from "@/lib/plan";
 import { buildFloorplanGroup, disposeGroup } from "@/lib/three/buildFloorplanGroup";
+import { addLights, AR_LIGHTS } from "@/lib/three/lighting";
 import { applyWallOpacity } from "@/lib/three/materials";
+import { DEFAULT_THEME, preloadTheme } from "@/lib/three/surfaceTheme";
 import {
   AnchoredPlacement,
   SurfaceGate,
@@ -55,6 +57,8 @@ const FALLBACK_DROP_M = 1.4;
 const FALLBACK_MIN_M = 0.25;
 const FALLBACK_MAX_M = 2.5;
 const FALLBACK_DEFAULT_M = 0.7;
+/** Longest wait for theme assets before AR is offered anyway (untextured, rebuilt later). */
+const THEME_WAIT_MS = 4000;
 const RETICLE_TRACKED = 0x39f0c0;
 const RETICLE_ESTIMATED = 0xffb020;
 const FAKE_RADIUS_PX = 250;
@@ -122,7 +126,7 @@ export class ArController {
   private camera = new THREE.PerspectiveCamera(70, 1, 0.01, 50);
   private reticle: THREE.Mesh<THREE.RingGeometry, THREE.MeshBasicMaterial> | null = null;
   private placementGroup: THREE.Group | null = null;
-  private wallMaterial: THREE.Material | null = null;
+  private wallMaterials: THREE.Material[] = [];
 
   // ---- XR session ----
   private session: XRSession | null = null;
@@ -136,6 +140,7 @@ export class ArController {
 
   // ---- per-frame state ----
   private placed = false;
+  private disposed = false;
   private pendingPlace = false;
   private pendingReanchor = false;
   private reanchorRequestedAt = 0;
@@ -224,10 +229,20 @@ export class ArController {
       this.fail(`3D could not start on this device: ${(e as Error).message}`);
       return;
     }
+    // Textures and door/window models before "Start AR" is offered, so the
+    // first placement is already textured (DECISION.md W5). preload never
+    // rejects; the wait is capped so a stalled network cannot block AR. If the
+    // model was placed before the assets landed, rebuild it once they do.
+    const themeLoad = preloadTheme(DEFAULT_THEME).then(() => {
+      if (!this.disposed && this.placed) this.rebuildPlacedGeometry();
+    });
+    await Promise.race([themeLoad, new Promise((r) => setTimeout(r, THEME_WAIT_MS))]);
+    if (this.disposed) return;
     await this.checkXrSupport();
   }
 
   dispose(): void {
+    this.disposed = true;
     if (this.fakeTimer) clearInterval(this.fakeTimer);
     this.session?.end().catch(() => undefined);
     this.hub.close();
@@ -253,10 +268,8 @@ export class ArController {
     this.camera.aspect = window.innerWidth / window.innerHeight;
     this.camera.updateProjectionMatrix();
 
-    this.scene.add(new THREE.HemisphereLight(0xffffff, 0x707070, 2.0));
-    const sun = new THREE.DirectionalLight(0xffffff, 1.1);
-    sun.position.set(1.0, 2.0, 0.6);
-    this.scene.add(sun);
+    // Brighter hemisphere than the viewer: AR has no environment map (W2).
+    addLights(this.scene, AR_LIGHTS, new THREE.Vector3(1.0, 2.0, 0.6));
 
     const reticle = new THREE.Mesh(new THREE.RingGeometry(0.08, 0.1, 32).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: RETICLE_TRACKED }));
     reticle.matrixAutoUpdate = false;
@@ -458,7 +471,7 @@ export class ArController {
     this.autoFit = false;
     this.modelDenom = 1;
     this.wallOpacity = 1;
-    if (this.wallMaterial) applyWallOpacity(this.wallMaterial, 1);
+    this.wallMaterials.forEach((m) => applyWallOpacity(m, 1));
     this.afterChange();
   }
 
@@ -554,7 +567,7 @@ export class ArController {
     const opacity = asNum(patch.wall_opacity);
     if (opacity !== null) {
       this.wallOpacity = clamp(opacity, OPACITY_MIN, OPACITY_MAX);
-      if (this.wallMaterial) applyWallOpacity(this.wallMaterial, this.wallOpacity);
+      this.wallMaterials.forEach((m) => applyWallOpacity(m, this.wallOpacity));
     }
     const yaw = asNum(patch.rotation_deg);
     if (yaw !== null) this.modelYawDeg = wrapDeg(yaw);
@@ -568,8 +581,13 @@ export class ArController {
   // =================================================================
 
   private buildGroup(): THREE.Group {
-    const model = buildFloorplanGroup(this.plan, { ppm: this.ppm, wallHeightM: this.wallHeightM, wallOpacity: this.wallOpacity });
-    this.wallMaterial = model.wallMaterial;
+    const model = buildFloorplanGroup(this.plan, {
+      ppm: this.ppm,
+      wallHeightM: this.wallHeightM,
+      wallOpacity: this.wallOpacity,
+      theme: DEFAULT_THEME,
+    });
+    this.wallMaterials = model.wallMaterials;
     return model.group;
   }
 

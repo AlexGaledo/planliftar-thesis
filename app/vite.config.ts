@@ -68,12 +68,15 @@ export default defineConfig(({ mode }) => {
         workbox: {
           // App shell + bundled sample plans. Fonts are self-hosted, so they are
           // precached too and the whole UI renders on a LAN with no internet.
-          globPatterns: ["**/*.{js,css,html,png,svg,woff2,json,webmanifest}"],
+          // jpg/glb: the "home" theme's CC0 textures and door/window models
+          // (public/textures, public/models), so 3D, AR and GLB export work offline.
+          globPatterns: ["**/*.{js,css,html,png,jpg,glb,svg,woff2,json,webmanifest}"],
           // The model-viewer chunk (iOS fallback) is ~1 MB; allow it into the precache.
           maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
           navigateFallback: "/index.html",
-          // Never answer API calls or the hub socket with the SPA shell.
-          navigateFallbackDenylist: [/^\/api\//, /^\/ws/],
+          // Never answer API calls, the hub socket or the asset licence files
+          // (linked from /learn#credits) with the SPA shell.
+          navigateFallbackDenylist: [/^\/api\//, /^\/ws/, /\/CREDITS\.txt$/],
           runtimeCaching: [
             { urlPattern: ({ url }) => url.pathname.startsWith("/api/"), handler: "NetworkOnly" },
           ],
