@@ -1,6 +1,6 @@
 {
-  "name": "PlanLiftAR",
-  "short_name": "PlanLift",
+  "name": "PlanVisAR",
+  "short_name": "PlanVisAR",
   "description": "Walk a floorplan at 1:1 in AR, and watch the walker on a live 2D map.",
   "start_url": "./index.html",
   "scope": "./",

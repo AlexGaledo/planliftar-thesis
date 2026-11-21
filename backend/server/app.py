@@ -55,7 +55,7 @@ def create_app(settings: Settings | None = None, runner=None) -> FastAPI:
         yield
         jobs.stop()
 
-    app = FastAPI(title="PlanLiftAR server", lifespan=lifespan, docs_url=None,
+    app = FastAPI(title="PlanVisAR server", lifespan=lifespan, docs_url=None,
                   redoc_url=None, openapi_url=None)
     app.state.settings, app.state.jobs, app.state.hub, app.state.runner = settings, jobs, hub, runner
     app.state.models = models
@@ -168,7 +168,7 @@ def create_app(settings: Settings | None = None, runner=None) -> FastAPI:
             return err(404, "unknown or expired model")
         return Response(data, media_type="model/gltf-binary",
                         headers={"Cache-Control": f"private, max-age={MODEL_TTL_S}",
-                                 "Content-Disposition": 'inline; filename="planliftar.glb"'})
+                                 "Content-Disposition": 'inline; filename="planvisar.glb"'})
 
     @app.api_route("/api/{rest:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH"])
     async def api_not_found(rest: str):
@@ -190,7 +190,7 @@ def create_app(settings: Settings | None = None, runner=None) -> FastAPI:
         if der is None:
             return err(404, "no certificate available")
         return Response(der, media_type="application/x-x509-ca-cert",
-                        headers={"Content-Disposition": 'attachment; filename="planliftar-ca.crt"',
+                        headers={"Content-Disposition": 'attachment; filename="planvisar-ca.crt"',
                                  "Cache-Control": "no-cache"})
 
     # ---------------------------------------------------------------- PWA

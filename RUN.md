@@ -1,4 +1,6 @@
-# PlanLiftAR: run the thesis demo
+# PlanVisAR: run the thesis demo
+
+> The app was renamed from PlanLiftAR to PlanVisAR (Nov 2026). Code identifiers, the Python package `planliftar_engine`, storage keys and env vars keep the old name on purpose.
 
 A Windows laptop with an NVIDIA GPU runs the analysis server and serves the app. An
 Android phone (Chrome, Google Play Services for AR) on the same Wi-Fi or hotspot

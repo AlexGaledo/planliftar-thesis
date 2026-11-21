@@ -70,7 +70,7 @@ export function LearnPage() {
         <h2>In short</h2>
         <div className={styles.prose}>
           <p>
-            PlanLiftAR takes a picture of a floor plan and lets you stand inside it on your phone. Two published, pretrained neural
+            PlanVisAR takes a picture of a floor plan and lets you stand inside it on your phone. Two published, pretrained neural
             networks read the image. <strong>MitUNet</strong> marks every pixel that looks like wall. The <strong>CubiCasa5k network</strong>{" "}
             gives a second opinion on where the rooms, doors and windows are.
           </p>

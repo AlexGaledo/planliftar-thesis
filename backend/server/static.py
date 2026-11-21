@@ -29,9 +29,9 @@ mimetypes.add_type("text/javascript", ".mjs")
 mimetypes.add_type("font/woff2", ".woff2")
 mimetypes.add_type("model/gltf-binary", ".glb")
 
-NOT_BUILT = """<!doctype html><meta charset="utf-8"><title>PlanLiftAR server</title>
+NOT_BUILT = """<!doctype html><meta charset="utf-8"><title>PlanVisAR server</title>
 <body style="font-family:system-ui;max-width:40rem;margin:3rem auto;padding:0 1rem">
-<h1>PlanLiftAR server is running</h1>
+<h1>PlanVisAR server is running</h1>
 <p>The web app has not been built, so there is nothing to show here yet.
 The API is up at <a href="/api/health">/api/health</a>.</p>
 <pre>cd app

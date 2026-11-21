@@ -16,7 +16,7 @@ from .config import Settings
 
 
 def parse_args(argv=None):
-    ap = argparse.ArgumentParser(prog="run_server.py", description="PlanLiftAR local server")
+    ap = argparse.ArgumentParser(prog="run_server.py", description="PlanVisAR local server")
     ap.add_argument("--tls", action="store_true",
                     help="also serve HTTPS/WSS on 0.0.0.0:--tls-port with a local CA cert "
                          "(needed for phones: WebXR, camera and PWA install need https)")
@@ -66,7 +66,7 @@ def print_banner(settings: Settings, a, ips: list[str]) -> None:
     print(line)
     mode = "DEMO (sample plans, no models)" if settings.demo else (
         "engine on " + ("CPU" if settings.device == "cpu" else "GPU if available"))
-    print(f"PlanLiftAR server  [{mode}]")
+    print(f"PlanVisAR server  [{mode}]")
     print(line)
     print(f"Local (dev, Vite proxies here):  http://{a.host}:{a.port}")
     app_built = (settings.static_dir / "index.html").is_file()
@@ -143,5 +143,5 @@ def main(argv=None) -> int:
         asyncio.run(serve(a, settings))
     except KeyboardInterrupt:
         pass
-    print("PlanLiftAR server stopped.")
+    print("PlanVisAR server stopped.")
     return 0

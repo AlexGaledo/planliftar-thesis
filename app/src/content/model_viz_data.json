@@ -1,6 +1,6 @@
 {
   "meta": {
-    "title": "PlanLiftAR model and pipeline visualization data",
+    "title": "PlanVisAR model and pipeline visualization data",
     "companion_doc": "docs/research/MODEL_EXPLAINED.md",
     "generated": "2026-11-20",
     "branch": "planliftar-mvp-pwa",
@@ -69,7 +69,7 @@
       {"model": "CubiCasa", "id": "cc_head", "label": "1x1 conv head + x4 upsample", "detail": "1x1 convs 512->512->256->44, transposed conv k4 s4 back to input size", "shape": "44 x H x W", "next": ["cc_heat", "cc_room", "cc_icon"]},
       {"model": "CubiCasa", "id": "cc_heat", "label": "21 junction heatmaps", "detail": "Sigmoid; wall/opening/icon corner junctions used by get_polygons() to build wall rectangles", "shape": "21 x H x W", "next": []},
       {"model": "CubiCasa", "id": "cc_room", "label": "12 room classes", "detail": "Background, Outdoor, Wall, Kitchen, Living Room, Bed Room, Bath, Entry, Railing, Storage, Garage, Undefined", "shape": "12 x H x W", "next": []},
-      {"model": "CubiCasa", "id": "cc_icon", "label": "11 icon classes", "detail": "Includes Window (class 1) and Door (class 2), which PlanLiftAR uses as fixtures", "shape": "11 x H x W", "next": []}
+      {"model": "CubiCasa", "id": "cc_icon", "label": "11 icon classes", "detail": "Includes Window (class 1) and Door (class 2), which PlanVisAR uses as fixtures", "shape": "11 x H x W", "next": []}
     ],
     "models": [
       {"name": "MitUNet", "role": "Primary wall segmenter; its probability map is the geometry source", "encoder": "MiT-b4 (SegFormer Mix-Transformer), transplanted from smp.Segformer into smp.Unet", "decoder": "U-Net (segmentation-models-pytorch 0.5.0)", "attention": "scSE (concurrent spatial + channel squeeze-and-excitation) in every decoder block", "heads": "1 binary wall channel", "input": "512x512 RGB", "loss": "Tversky (alpha 0.6, beta 0.4 per upstream README)", "training_data": "CubiCasa5k (this checkpoint); upstream also publishes a regional fine-tune", "weights_size_mb": 257.4, "license": "Code MIT; weights CC BY-NC 4.0 (inherited from CubiCasa5k)"},

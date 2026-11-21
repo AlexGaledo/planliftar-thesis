@@ -1,4 +1,4 @@
-# PlanLiftAR backend
+# PlanVisAR backend
 
 Two parts:
 

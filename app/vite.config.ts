@@ -1,5 +1,5 @@
 /**
- * Vite config for the PlanLiftAR PWA.
+ * Vite config for the PlanVisAR PWA.
  *
  * - `@` aliases `src/` so imports read `@/lib/plan` instead of `../../../lib/plan`.
  * - vite-plugin-pwa generates the service worker (Workbox) and the web manifest.
@@ -41,18 +41,18 @@ export default defineConfig(({ mode }) => {
         // "prompt": a new version waits until the user taps Reload in the toast,
         // so an update never swaps the code under someone mid-walkthrough.
         registerType: "prompt",
-        includeAssets: ["icons/*.png"],
+        includeAssets: ["icons/*.png", "icons/*.svg"],
         manifest: {
           id: "/",
-          name: "PlanLiftAR",
-          short_name: "PlanLift",
+          name: "PlanVisAR",
+          short_name: "PlanVisAR",
           description: "Turn a floor plan picture into a 3D model and walk it at 1:1 in AR.",
           start_url: "/",
           scope: "/",
           display: "standalone",
           orientation: "any",
-          background_color: "#ffffff",
-          theme_color: "#000000",
+          background_color: "#fafaf7",
+          theme_color: "#12302f",
           categories: ["productivity", "utilities"],
           icons: [
             { src: "/icons/icon-192.png", sizes: "192x192", type: "image/png", purpose: "any" },
