@@ -41,5 +41,10 @@ export const router = createBrowserRouter(
       lazy: () => import("@/features/bakeoff/BakeoffPage").then((m) => ({ Component: m.BakeoffPage })),
     },
   ],
-  { future: { v7_relativeSplatPath: true, v7_fetcherPersist: true, v7_normalizeFormMethod: true, v7_partialHydration: true, v7_skipActionErrorRevalidation: true } },
+  {
+    // GitHub Pages serves the app under a subpath (see vite.config.ts `base`);
+    // the router must strip that prefix the same way the SW's navigateFallback does.
+    basename: import.meta.env.BASE_URL,
+    future: { v7_relativeSplatPath: true, v7_fetcherPersist: true, v7_normalizeFormMethod: true, v7_partialHydration: true, v7_skipActionErrorRevalidation: true },
+  },
 );
