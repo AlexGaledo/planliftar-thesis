@@ -17,7 +17,7 @@ Python 3.11+ (tested on 3.13, Windows 11, RTX 3050 Laptop 4 GB).
 
 ```powershell
 cd backend
-pip install torch --index-url https://download.pytorch.org/whl/cu128   # or .../whl/cpu
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128   # or .../whl/cpu
 pip install -r requirements.txt
 pip install qrcode                                    # optional: QR code at startup
 python -m planliftar_engine --download-only           # ~470 MB of weights into backend/weights/

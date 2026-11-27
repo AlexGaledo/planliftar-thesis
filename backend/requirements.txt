@@ -1,10 +1,16 @@
 # planliftar_engine runtime deps (tested on Python 3.13, Windows 11, RTX 3050 4 GB).
 #
-# torch is NOT pinned here on purpose: install the build matching your GPU first, e.g.
-#   pip install torch --index-url https://download.pytorch.org/whl/cu128   (CUDA 12.8)
-#   pip install torch --index-url https://download.pytorch.org/whl/cpu     (CPU only)
-# Tested with torch 2.11.0+cu128.
+# torch/torchvision are NOT pinned here on purpose: install the matching build pair
+# first, from the SAME index, e.g.
+#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128   (CUDA 12.8)
+#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu     (CPU only)
+# segmentation-models-pytorch declares its own unpinned torchvision>=0.9, so if torch/torchvision
+# aren't already installed from the same index before this file, pip resolves torchvision from
+# PyPI's default (CPU-only) wheels regardless of your CUDA torch build, breaking the CUDA ops
+# ("torchvision::nms does not exist" at import). Installing both together up front avoids that.
+# Tested with torch 2.11.0+cu128, torchvision 0.26.0+cu128.
 torch>=2.4
+torchvision>=0.19                    # must come from the same index/build as torch above
 segmentation-models-pytorch==0.5.0   # same as the notebooks; pulls timm
 numpy>=1.26
 opencv-python-headless>=4.9
