@@ -1,0 +1,56 @@
+name: Deploy app to GitHub Pages
+
+# Hosts the built PWA at https://<owner>.github.io/planliftar-thesis/, which the
+# Bubblewrap/TWA wrapper (features/offline-apk.md, decision D-0001) wraps as a
+# native .apk. Runs on every push to main that touches app/; the previous
+# deploy stays live if the build fails, so this can't break the public demo URL.
+on:
+  push:
+    branches: [main]
+    paths: ["app/**", ".github/workflows/pages.yml"]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+          cache-dependency-path: app/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+        working-directory: app
+      - run: pnpm build
+        working-directory: app
+        env:
+          # Must match the repo name so GitHub Pages' project-page subpath
+          # lines up with the PWA scope/start_url and the SW precache paths.
+          VITE_BASE_PATH: /planliftar-thesis/
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: app/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
