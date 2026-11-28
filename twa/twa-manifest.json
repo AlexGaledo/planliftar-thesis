@@ -1,0 +1,32 @@
+{
+  "packageId": "com.planvisar.app",
+  "host": "alexgaledo.github.io",
+  "name": "PlanVisAR",
+  "launcherName": "PlanVisAR",
+  "display": "standalone",
+  "orientation": "any",
+  "themeColor": "#12302f",
+  "navigationColor": "#12302f",
+  "navigationColorDark": "#12302f",
+  "navigationDividerColor": "#12302f",
+  "navigationDividerColorDark": "#12302f",
+  "backgroundColor": "#fafaf7",
+  "enableNotifications": false,
+  "startUrl": "/planliftar-thesis/",
+  "webManifestUrl": "https://alexgaledo.github.io/planliftar-thesis/manifest.webmanifest",
+  "fullScopeUrl": "https://alexgaledo.github.io/planliftar-thesis/",
+  "iconUrl": "https://alexgaledo.github.io/planliftar-thesis/icons/icon-512.png",
+  "maskableIconUrl": "https://alexgaledo.github.io/planliftar-thesis/icons/maskable-512.png",
+  "shortcuts": [
+    { "name": "New project", "short_name": "New", "url": "/planliftar-thesis/new", "icon_url": "https://alexgaledo.github.io/planliftar-thesis/icons/icon-192.png" },
+    { "name": "Live map", "short_name": "Map", "url": "/planliftar-thesis/map", "icon_url": "https://alexgaledo.github.io/planliftar-thesis/icons/icon-192.png" }
+  ],
+  "appVersionName": "1.0.0",
+  "appVersionCode": 1,
+  "minSdkVersion": 21,
+  "generatorApp": "@bubblewrap/core",
+  "signingKey": {
+    "path": "./android.keystore",
+    "alias": "android"
+  }
+}

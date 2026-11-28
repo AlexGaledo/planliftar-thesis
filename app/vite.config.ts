@@ -6,6 +6,14 @@
  * - The dev server proxies `/api` and `/ws` to the local inference server so the
  *   app can use same-origin URLs in development exactly as in production.
  * - Vitest reads the `test` block (jsdom + Testing Library setup).
+ *
+ * Two deploy targets share this same config:
+ *   - `backend/server` serves `dist/` from its own domain root (LAN/local demo) -> base "/".
+ *   - GitHub Pages serves it as a project page under a subpath (for the Bubblewrap/TWA
+ *     wrapper, see `features/offline-apk.md`) -> base "/planliftar-thesis/".
+ * Set VITE_BASE_PATH to override (must start and end with "/"); everything that needs
+ * the base (PWA manifest start_url/scope/id/icons, the router's basename via
+ * import.meta.env.BASE_URL, the SW's navigateFallback) derives from this one value.
  */
 /// <reference types="vitest" />
 import { fileURLToPath, URL } from "node:url";
@@ -20,8 +28,11 @@ const DEFAULT_DEV_BACKEND = "http://127.0.0.1:8000";
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), "");
   const backend = env.VITE_DEV_BACKEND || DEFAULT_DEV_BACKEND;
+  const base = env.VITE_BASE_PATH || "/";
+  const withBase = (path: string) => `${base}${path}`.replace(/\/{2,}/g, "/");
 
   return {
+    base,
     resolve: { alias: { "@": fileURLToPath(new URL("./src", import.meta.url)) } },
     server: {
       host: true,
@@ -43,26 +54,26 @@ export default defineConfig(({ mode }) => {
         registerType: "prompt",
         includeAssets: ["icons/*.png", "icons/*.svg"],
         manifest: {
-          id: "/",
+          id: base,
           name: "PlanVisAR",
           short_name: "PlanVisAR",
           description: "Turn a floor plan picture into a 3D model and walk it at 1:1 in AR.",
-          start_url: "/",
-          scope: "/",
+          start_url: base,
+          scope: base,
           display: "standalone",
           orientation: "any",
           background_color: "#fafaf7",
           theme_color: "#12302f",
           categories: ["productivity", "utilities"],
           icons: [
-            { src: "/icons/icon-192.png", sizes: "192x192", type: "image/png", purpose: "any" },
-            { src: "/icons/icon-512.png", sizes: "512x512", type: "image/png", purpose: "any" },
-            { src: "/icons/maskable-192.png", sizes: "192x192", type: "image/png", purpose: "maskable" },
-            { src: "/icons/maskable-512.png", sizes: "512x512", type: "image/png", purpose: "maskable" },
+            { src: withBase("icons/icon-192.png"), sizes: "192x192", type: "image/png", purpose: "any" },
+            { src: withBase("icons/icon-512.png"), sizes: "512x512", type: "image/png", purpose: "any" },
+            { src: withBase("icons/maskable-192.png"), sizes: "192x192", type: "image/png", purpose: "maskable" },
+            { src: withBase("icons/maskable-512.png"), sizes: "512x512", type: "image/png", purpose: "maskable" },
           ],
           shortcuts: [
-            { name: "New project", short_name: "New", url: "/new", icons: [{ src: "/icons/icon-192.png", sizes: "192x192" }] },
-            { name: "Live map", short_name: "Map", url: "/map", icons: [{ src: "/icons/icon-192.png", sizes: "192x192" }] },
+            { name: "New project", short_name: "New", url: withBase("new"), icons: [{ src: withBase("icons/icon-192.png"), sizes: "192x192" }] },
+            { name: "Live map", short_name: "Map", url: withBase("map"), icons: [{ src: withBase("icons/icon-192.png"), sizes: "192x192" }] },
           ],
         },
         workbox: {
@@ -73,7 +84,7 @@ export default defineConfig(({ mode }) => {
           globPatterns: ["**/*.{js,css,html,png,jpg,glb,svg,woff2,json,webmanifest}"],
           // The model-viewer chunk (iOS fallback) is ~1 MB; allow it into the precache.
           maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
-          navigateFallback: "/index.html",
+          navigateFallback: withBase("index.html"),
           // Never answer API calls, the hub socket or the asset licence files
           // (linked from /learn#credits) with the SPA shell.
           navigateFallbackDenylist: [/^\/api\//, /^\/ws/, /\/CREDITS\.txt$/],

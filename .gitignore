@@ -21,3 +21,10 @@ deliverables/livemap/qa/
 backend/weights/
 backend/samples/
 backend/out/
+
+# TWA/Bubblewrap: generated Android project, signing key, build output
+twa/android.keystore
+twa/app/
+twa/*.apk
+twa/*.aab
+twa/.bubblewrap/
